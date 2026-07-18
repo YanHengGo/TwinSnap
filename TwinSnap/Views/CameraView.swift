@@ -16,7 +16,6 @@ struct CameraView: View {
     let viewModel: CameraViewModel
 
     private let pipSize = CGSize(width: 120, height: 168)
-    private let accent = Color(red: 1.0, green: 0.353, blue: 0.235)
 
     var body: some View {
         GeometryReader { proxy in
@@ -28,8 +27,7 @@ struct CameraView: View {
                     .ignoresSafeArea()
                 #endif
 
-                hudOverlay
-                toastOverlay
+                CameraHUD(viewModel: viewModel)
             }
             .onAppear { viewModel.canvasSize = proxy.size }
             .onChange(of: proxy.size) { _, newValue in
@@ -48,9 +46,19 @@ struct CameraView: View {
             set: { viewModel.isPreviewPresented = $0 }
         )) {
             if let image = viewModel.composedImage {
-                PreviewScreen(image: image) {
-                    viewModel.dismissPreviewForRetake()
-                }
+                PreviewScreen(
+                    image: image,
+                    onRetake: { viewModel.dismissPreviewForRetake() },
+                    onSave: { await viewModel.saveToLibrary() }
+                )
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.isSettingsPresented },
+            set: { viewModel.isSettingsPresented = $0 }
+        )) {
+            SettingsScreen(settings: viewModel.settings) {
+                viewModel.isSettingsPresented = false
             }
         }
         #endif
@@ -138,123 +146,4 @@ struct CameraView: View {
             }
     }
     #endif
-
-    private var hudOverlay: some View {
-        VStack {
-            header
-            Spacer()
-            footer
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            glassButton {
-                viewModel.cycleFlash()
-            } content: {
-                Image(systemName: viewModel.flashMode.sfSymbol)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(viewModel.flashMode == .off ? .white.opacity(0.85) : accent)
-            }
-
-            Spacer()
-
-            glassButton {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    viewModel.toggleLayout()
-                }
-            } content: {
-                Image(systemName: "rectangle.inset.filled")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-    }
-
-    private var footer: some View {
-        HStack {
-            thumbnail
-            Spacer()
-            shutter
-            Spacer()
-            swapButton
-        }
-        .padding(.horizontal, 30)
-        .padding(.bottom, 32)
-    }
-
-    private var thumbnail: some View {
-        RoundedRectangle(cornerRadius: 14)
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 50, height: 50)
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
-    }
-
-    private var shutter: some View {
-        Button {
-            Task { await viewModel.capture() }
-        } label: {
-            ZStack {
-                Circle()
-                    .stroke(accent, lineWidth: 4)
-                    .frame(width: 78, height: 78)
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 64, height: 64)
-                    .scaleEffect(viewModel.isCapturing ? 0.85 : 1.0)
-                    .animation(.easeOut(duration: 0.15), value: viewModel.isCapturing)
-            }
-        }
-        .disabled(viewModel.isCapturing)
-    }
-
-    private var swapButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                viewModel.swapMainCamera()
-            }
-        } label: {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(width: 50, height: 50)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
-        }
-    }
-
-    private func glassButton<Content: View>(
-        action: @escaping () -> Void,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        Button(action: action) {
-            content()
-                .frame(width: 44, height: 44)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
-        }
-    }
-
-    private var toastOverlay: some View {
-        VStack {
-            Spacer()
-            if let message = viewModel.toastMessage {
-                Text(message)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
-                    .padding(.bottom, 140)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.toastMessage)
-    }
 }
