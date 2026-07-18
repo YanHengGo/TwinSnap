@@ -19,16 +19,22 @@ struct CameraView: View {
     private let accent = Color(red: 1.0, green: 0.353, blue: 0.235)
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            #if os(iOS)
-            layoutContent
-                .ignoresSafeArea()
-            #endif
+                #if os(iOS)
+                layoutContent
+                    .ignoresSafeArea()
+                #endif
 
-            hudOverlay
-            toastOverlay
+                hudOverlay
+                toastOverlay
+            }
+            .onAppear { viewModel.canvasSize = proxy.size }
+            .onChange(of: proxy.size) { _, newValue in
+                viewModel.canvasSize = newValue
+            }
         }
         .task {
             viewModel.startSession()
@@ -36,6 +42,18 @@ struct CameraView: View {
         .onDisappear {
             viewModel.stopSession()
         }
+        #if os(iOS)
+        .fullScreenCover(isPresented: Binding(
+            get: { viewModel.isPreviewPresented },
+            set: { viewModel.isPreviewPresented = $0 }
+        )) {
+            if let image = viewModel.composedImage {
+                PreviewScreen(image: image) {
+                    viewModel.dismissPreviewForRetake()
+                }
+            }
+        }
+        #endif
     }
 
     #if os(iOS)
