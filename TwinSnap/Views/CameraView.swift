@@ -146,5 +146,4 @@ struct CameraView: View {
             }
     }
     #endif
-
 }
