@@ -46,8 +46,16 @@ final class PreviewContainerView: UIView {
     }
 
     func attach(previewLayer: AVCaptureVideoPreviewLayer) {
-        guard currentLayer !== previewLayer else { return }
-        currentLayer?.removeFromSuperlayer()
+        guard currentLayer !== previewLayer else {
+            previewLayer.frame = bounds
+            return
+        }
+        // 直前まで自分の子だった場合のみ剥がす（他View に移った場合は触らない）
+        if let current = currentLayer, current.superlayer === layer {
+            current.removeFromSuperlayer()
+        }
+        // 新しいレイヤーが他View にまだ属していれば安全に外してから貼り直す
+        previewLayer.removeFromSuperlayer()
         previewLayer.frame = bounds
         layer.addSublayer(previewLayer)
         currentLayer = previewLayer
