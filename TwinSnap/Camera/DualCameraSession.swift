@@ -2,8 +2,7 @@
 //  DualCameraSession.swift
 //  TwinSnap
 //
-//  AVCaptureMultiCamSession のセットアップ・最適フォーマット選択・プレビューレイヤー提供。
-//  ステップ2ではプレビューまで。撮影出力はステップ3で追加。
+//  AVCaptureMultiCamSession のセットアップ・最適フォーマット選択・プレビュー/撮影出力。
 //
 
 import AVFoundation
@@ -17,18 +16,32 @@ enum DualCameraSessionError: Error {
     case noFrontCamera
     case noCompatibleFormat
     case cannotAddInput
+    case cannotAddOutput
     case cannotAddConnection
     case noPort
+    case captureFailed
 }
 
-final class DualCameraSession {
+struct DualCapturedPhotos {
+    let back: Data
+    let front: Data
+}
+
+final class DualCameraSession: NSObject {
 
     let session = AVCaptureMultiCamSession()
 
     private(set) var backPreviewLayer: AVCaptureVideoPreviewLayer?
     private(set) var frontPreviewLayer: AVCaptureVideoPreviewLayer?
 
+    private let backPhotoOutput = AVCapturePhotoOutput()
+    private let frontPhotoOutput = AVCapturePhotoOutput()
+
+    private var backDevice: AVCaptureDevice?
     private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.session")
+
+    private var captureDelegates: [Int64: PhotoCaptureDelegate] = [:]
+    private let delegateLock = NSLock()
 
     func configure() throws {
         guard AVCaptureMultiCamSession.isMultiCamSupported else {
@@ -51,11 +64,16 @@ final class DualCameraSession {
         try configure(device: back, format: backFormat)
         try configure(device: front, format: frontFormat)
 
-        let backLayer = try addInputAndPreview(for: back, position: .back, mirrored: false)
-        let frontLayer = try addInputAndPreview(for: front, position: .front, mirrored: true)
+        let backPort = try addInput(for: back, position: .back)
+        let frontPort = try addInput(for: front, position: .front)
 
-        backPreviewLayer = backLayer
-        frontPreviewLayer = frontLayer
+        backPreviewLayer = try addPreviewConnection(port: backPort, mirrored: false)
+        frontPreviewLayer = try addPreviewConnection(port: frontPort, mirrored: true)
+
+        try addPhotoOutputConnection(output: backPhotoOutput, port: backPort, mirrored: false)
+        try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: true)
+
+        backDevice = back
     }
 
     func start() {
@@ -72,6 +90,14 @@ final class DualCameraSession {
         }
     }
 
+    /// 前後カメラの写真を同時にキャプチャする。両方揃った時点で返す。
+    func capture(flashMode: AVCaptureDevice.FlashMode) async throws -> DualCapturedPhotos {
+        async let backData = capturePhoto(from: backPhotoOutput, flashMode: flashMode)
+        async let frontData = capturePhoto(from: frontPhotoOutput, flashMode: .off)
+        let (back, front) = try await (backData, frontData)
+        return DualCapturedPhotos(back: back, front: front)
+    }
+
     // MARK: - Private
 
     private func configure(device: AVCaptureDevice, format: AVCaptureDevice.Format) throws {
@@ -84,17 +110,12 @@ final class DualCameraSession {
         }
     }
 
-    private func addInputAndPreview(
-        for device: AVCaptureDevice,
-        position: AVCaptureDevice.Position,
-        mirrored: Bool
-    ) throws -> AVCaptureVideoPreviewLayer {
+    private func addInput(for device: AVCaptureDevice, position: AVCaptureDevice.Position) throws -> AVCaptureInput.Port {
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
             throw DualCameraSessionError.cannotAddInput
         }
         session.addInputWithNoConnections(input)
-
         guard let port = input.ports(
             for: .video,
             sourceDeviceType: .builtInWideAngleCamera,
@@ -102,12 +123,15 @@ final class DualCameraSession {
         ).first else {
             throw DualCameraSessionError.noPort
         }
+        return port
+    }
 
-        let previewLayer = AVCaptureVideoPreviewLayer()
-        previewLayer.setSessionWithNoConnection(session)
-        previewLayer.videoGravity = .resizeAspectFill
+    private func addPreviewConnection(port: AVCaptureInput.Port, mirrored: Bool) throws -> AVCaptureVideoPreviewLayer {
+        let layer = AVCaptureVideoPreviewLayer()
+        layer.setSessionWithNoConnection(session)
+        layer.videoGravity = .resizeAspectFill
 
-        let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: previewLayer)
+        let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: layer)
         if mirrored, connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored = true
@@ -116,8 +140,63 @@ final class DualCameraSession {
             throw DualCameraSessionError.cannotAddConnection
         }
         session.addConnection(connection)
+        return layer
+    }
 
-        return previewLayer
+    private func addPhotoOutputConnection(
+        output: AVCapturePhotoOutput,
+        port: AVCaptureInput.Port,
+        mirrored: Bool
+    ) throws {
+        guard session.canAddOutput(output) else {
+            throw DualCameraSessionError.cannotAddOutput
+        }
+        session.addOutputWithNoConnections(output)
+
+        let connection = AVCaptureConnection(inputPorts: [port], output: output)
+        if mirrored, connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            // プレビューはミラーリングするが、保存する写真は反転しない
+            connection.isVideoMirrored = false
+        }
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+        guard session.canAddConnection(connection) else {
+            throw DualCameraSessionError.cannotAddConnection
+        }
+        session.addConnection(connection)
+    }
+
+    private func capturePhoto(
+        from output: AVCapturePhotoOutput,
+        flashMode: AVCaptureDevice.FlashMode
+    ) async throws -> Data {
+        let settings = AVCapturePhotoSettings()
+        if output.supportedFlashModes.contains(flashMode) {
+            settings.flashMode = flashMode
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let delegate = PhotoCaptureDelegate(uniqueID: settings.uniqueID) { [weak self] uid, result in
+                self?.removeDelegate(uniqueID: uid)
+                continuation.resume(with: result)
+            }
+            addDelegate(delegate, for: settings.uniqueID)
+            output.capturePhoto(with: settings, delegate: delegate)
+        }
+    }
+
+    private func addDelegate(_ delegate: PhotoCaptureDelegate, for uniqueID: Int64) {
+        delegateLock.lock()
+        captureDelegates[uniqueID] = delegate
+        delegateLock.unlock()
+    }
+
+    private func removeDelegate(uniqueID: Int64) {
+        delegateLock.lock()
+        captureDelegates.removeValue(forKey: uniqueID)
+        delegateLock.unlock()
     }
 
     /// 前後カメラ双方が MultiCam 対応するフォーマットの中から、
@@ -164,6 +243,30 @@ final class DualCameraSession {
             }
         }
         return best.map { ($0.backFormat, $0.frontFormat) }
+    }
+}
+
+private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    let uniqueID: Int64
+    let completion: (Int64, Result<Data, Error>) -> Void
+
+    init(uniqueID: Int64, completion: @escaping (Int64, Result<Data, Error>) -> Void) {
+        self.uniqueID = uniqueID
+        self.completion = completion
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if let error {
+            completion(uniqueID, .failure(error))
+        } else if let data = photo.fileDataRepresentation() {
+            completion(uniqueID, .success(data))
+        } else {
+            completion(uniqueID, .failure(DualCameraSessionError.captureFailed))
+        }
     }
 }
 
