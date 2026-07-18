@@ -20,7 +20,9 @@ struct RootView: View {
             case .unsupported:
                 UnsupportedDeviceView()
             case .ready:
-                CameraView()
+                CameraView(viewModel: viewModel)
+            case .failed(let message):
+                CameraFailureView(message: message)
             }
         }
         .task {
@@ -36,6 +38,28 @@ private struct LaunchCheckingView: View {
             Color.black.ignoresSafeArea()
             ProgressView()
                 .tint(.white)
+        }
+    }
+}
+
+private struct CameraFailureView: View {
+    let message: String
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(.orange)
+                Text("カメラの初期化に失敗しました")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(message)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
         }
     }
 }

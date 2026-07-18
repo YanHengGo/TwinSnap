@@ -2,11 +2,11 @@
 //  CameraViewModel.swift
 //  TwinSnap
 //
-//  カメラ権限・MultiCam対応判定・セッションのライフサイクルを管理する。
-//  ステップ1では権限と対応判定のみ実装。セッション本体はステップ2以降で追加。
+//  カメラ権限・MultiCam対応判定・セッションのライフサイクル・レイアウト状態を管理する。
 //
 
 import AVFoundation
+import CoreGraphics
 import SwiftUI
 
 @Observable
@@ -17,9 +17,21 @@ final class CameraViewModel {
         case permissionDenied
         case unsupported
         case ready
+        case failed(String)
+    }
+
+    enum Layout {
+        case pip
+        case stacked
     }
 
     private(set) var launchState: LaunchState = .checking
+    var layout: Layout = .pip
+    var pipOffset: CGSize = .zero
+
+    #if os(iOS)
+    private(set) var dualSession: DualCameraSession?
+    #endif
 
     func bootstrap() async {
         let granted = await requestCameraPermission()
@@ -31,7 +43,34 @@ final class CameraViewModel {
             launchState = .unsupported
             return
         }
-        launchState = .ready
+        #if os(iOS)
+        do {
+            let session = DualCameraSession()
+            try session.configure()
+            dualSession = session
+            launchState = .ready
+        } catch {
+            launchState = .failed(String(describing: error))
+        }
+        #else
+        launchState = .unsupported
+        #endif
+    }
+
+    func startSession() {
+        #if os(iOS)
+        dualSession?.start()
+        #endif
+    }
+
+    func stopSession() {
+        #if os(iOS)
+        dualSession?.stop()
+        #endif
+    }
+
+    func toggleLayout() {
+        layout = (layout == .pip) ? .stacked : .pip
     }
 
     private var isMultiCamSupported: Bool {
