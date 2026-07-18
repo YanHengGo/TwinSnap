@@ -48,9 +48,19 @@ struct CameraView: View {
             set: { viewModel.isPreviewPresented = $0 }
         )) {
             if let image = viewModel.composedImage {
-                PreviewScreen(image: image) {
-                    viewModel.dismissPreviewForRetake()
-                }
+                PreviewScreen(
+                    image: image,
+                    onRetake: { viewModel.dismissPreviewForRetake() },
+                    onSave: { await viewModel.saveToLibrary() }
+                )
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.isSettingsPresented },
+            set: { viewModel.isSettingsPresented = $0 }
+        )) {
+            SettingsScreen(settings: viewModel.settings) {
+                viewModel.isSettingsPresented = false
             }
         }
         #endif
@@ -159,14 +169,24 @@ struct CameraView: View {
 
             Spacer()
 
-            glassButton {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    viewModel.toggleLayout()
+            HStack(spacing: 10) {
+                glassButton {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        viewModel.toggleLayout()
+                    }
+                } content: {
+                    Image(systemName: "rectangle.inset.filled")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
                 }
-            } content: {
-                Image(systemName: "rectangle.inset.filled")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+
+                glassButton {
+                    viewModel.isSettingsPresented = true
+                } content: {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -186,13 +206,25 @@ struct CameraView: View {
     }
 
     private var thumbnail: some View {
-        RoundedRectangle(cornerRadius: 14)
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 50, height: 50)
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
+        Group {
+            #if os(iOS)
+            if let image = viewModel.latestThumbnail {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color.white.opacity(0.08)
+            }
+            #else
+            Color.white.opacity(0.08)
+            #endif
+        }
+        .frame(width: 50, height: 50)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
     }
 
     private var shutter: some View {

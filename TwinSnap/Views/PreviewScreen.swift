@@ -2,8 +2,7 @@
 //  PreviewScreen.swift
 //  TwinSnap
 //
-//  撮影後の全画面プレビュー。戻る / 保存 / 共有 / 再撮影 のHUD付き。
-//  保存・共有はステップ5で機能実装、ステップ4ではUIのみ。
+//  撮影後の全画面プレビュー。戻る / 保存 / 共有 / 再撮影。
 //
 
 #if canImport(UIKit)
@@ -14,6 +13,10 @@ struct PreviewScreen: View {
 
     let image: UIImage
     let onRetake: () -> Void
+    let onSave: () async -> Bool
+
+    @State private var isSaving = false
+    @State private var didSave = false
 
     private let accent = Color(red: 1.0, green: 0.353, blue: 0.235)
 
@@ -58,42 +61,65 @@ struct PreviewScreen: View {
 
     private var footer: some View {
         HStack(spacing: 14) {
-            pillButton(icon: "square.and.arrow.down", label: "保存") {
-                // Step 5 で実装
-            }
-            .disabled(true)
-            .opacity(0.6)
-
-            Button {
-                // Step 5 で実装
-            } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white)
-                    Text("共有")
-                        .font(.caption)
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 66, height: 66)
-                .background(accent, in: Circle())
-            }
-            .disabled(true)
-            .opacity(0.6)
-
-            pillButton(icon: "arrow.counterclockwise", label: "再撮影") {
-                onRetake()
-            }
+            saveButton
+            shareButton
+            retakeButton
         }
     }
 
-    private func pillButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var saveButton: some View {
+        Button {
+            Task {
+                isSaving = true
+                let success = await onSave()
+                isSaving = false
+                if success { didSave = true }
+            }
+        } label: {
             VStack(spacing: 3) {
-                Image(systemName: icon)
+                if isSaving {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: didSave ? "checkmark" : "square.and.arrow.down")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                Text(didSave ? "保存済み" : "保存")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+            }
+            .frame(maxWidth: 110)
+            .frame(height: 56)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+        }
+        .disabled(isSaving || didSave)
+    }
+
+    private var shareButton: some View {
+        ShareLink(item: Image(uiImage: image), preview: SharePreview("TwinSnap", image: Image(uiImage: image))) {
+            VStack(spacing: 3) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.white)
+                Text("共有")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 66, height: 66)
+            .background(accent, in: Circle())
+        }
+    }
+
+    private var retakeButton: some View {
+        Button {
+            onRetake()
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "arrow.counterclockwise")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.white)
-                Text(label)
+                Text("再撮影")
                     .font(.caption)
                     .foregroundStyle(.white)
             }

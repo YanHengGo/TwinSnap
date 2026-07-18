@@ -71,12 +71,21 @@ final class CameraViewModel {
     var canvasSize: CGSize = .zero
     private(set) var isCapturing: Bool = false
     private(set) var toastMessage: String?
+    var isSettingsPresented: Bool = false
 
     #if os(iOS)
     private(set) var dualSession: DualCameraSession?
     private(set) var composedImage: UIImage?
+    private(set) var lastCapturedPhotos: DualCapturedPhotos?
+    private(set) var latestThumbnail: UIImage?
     var isPreviewPresented: Bool = false
     #endif
+
+    let settings: AppSettings
+
+    init(settings: AppSettings = AppSettings()) {
+        self.settings = settings
+    }
 
     // PiP レイアウトの基準座標（CameraView と揃える）
     private let pipBase = CGPoint(x: 16, y: 100)
@@ -97,13 +106,19 @@ final class CameraViewModel {
             let session = DualCameraSession()
             try session.configure()
             dualSession = session
+            applyDefaultLayoutFromSettings()
             launchState = .ready
+            await refreshLatestThumbnail()
         } catch {
             launchState = .failed(String(describing: error))
         }
         #else
         launchState = .unsupported
         #endif
+    }
+
+    private func applyDefaultLayoutFromSettings() {
+        layout = (settings.defaultLayout == .pip) ? .pip : .stacked
     }
 
     func startSession() {
@@ -138,6 +153,7 @@ final class CameraViewModel {
         do {
             let photos = try await session.capture(flashMode: flashMode.avFlashMode)
             let composed = compose(photos: photos)
+            lastCapturedPhotos = photos
             composedImage = composed
             isPreviewPresented = true
         } catch {
@@ -150,8 +166,41 @@ final class CameraViewModel {
         #if os(iOS)
         isPreviewPresented = false
         composedImage = nil
+        lastCapturedPhotos = nil
         #endif
     }
+
+    #if os(iOS)
+    /// 現在のプレビュー画像・撮影データを、設定「保存形式」に従ってフォトライブラリへ保存する。
+    func saveToLibrary() async -> Bool {
+        guard let composed = composedImage else { return false }
+        var images: [UIImage] = [composed]
+        if settings.saveMode == .composedAndOriginals,
+           let photos = lastCapturedPhotos,
+           let backImage = UIImage(data: photos.back),
+           let frontImage = UIImage(data: photos.front) {
+            images.append(backImage)
+            images.append(frontImage)
+        }
+        do {
+            try await PhotoLibraryService.save(images: images)
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            showToast("保存しました")
+            await refreshLatestThumbnail()
+            return true
+        } catch {
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+            showToast("保存に失敗しました")
+            return false
+        }
+    }
+
+    func refreshLatestThumbnail() async {
+        latestThumbnail = await PhotoLibraryService.loadLatestThumbnail()
+    }
+    #endif
 
     #if os(iOS)
     private func compose(photos: DualCapturedPhotos) -> UIImage? {
