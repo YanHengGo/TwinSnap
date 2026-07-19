@@ -39,6 +39,19 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var captureDelegates: [Int64: PhotoCaptureDelegate] = [:]
     private let delegateLock = NSLock()
 
+    // MARK: - Beauty state
+
+    /// 顔検出頻度（フレーム）。5フレームに1回 = 30fps時に6fps相当。
+    private let faceDetectionInterval = 5
+
+    private var beautyLevel: Double = 0
+    private let beautyLevelLock = NSLock()
+
+    private var backFrameCounter: Int = 0
+    private var frontFrameCounter: Int = 0
+    private var lastBackFaces: [CGRect] = []
+    private var lastFrontFaces: [CGRect] = []
+
     func configure() throws {
         guard AVCaptureMultiCamSession.isMultiCamSupported else {
             throw DualCameraSessionError.multiCamNotSupported
@@ -95,6 +108,19 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         async let frontData = capturePhoto(from: frontPhotoOutput, flashMode: .off)
         let (back, front) = try await (backData, frontData)
         return DualCapturedPhotos(back: back, front: front)
+    }
+
+    func setBeautyLevel(_ level: Double) {
+        beautyLevelLock.lock()
+        beautyLevel = level
+        beautyLevelLock.unlock()
+    }
+
+    private func currentBeautyLevel() -> Double {
+        beautyLevelLock.lock()
+        let level = beautyLevel
+        beautyLevelLock.unlock()
+        return level
     }
 
     // MARK: - Private setup
@@ -223,12 +249,37 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
     ) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let level = currentBeautyLevel()
 
         if output === backVideoOutput {
-            backRenderer?.present(ciImage)
+            processBack(ciImage: ciImage, level: level)
         } else if output === frontVideoOutput {
-            frontRenderer?.present(ciImage)
+            processFront(ciImage: ciImage, level: level)
         }
+    }
+
+    /// backVideoQueue（シリアル）でのみ呼ばれるため排他不要。
+    private func processBack(ciImage: CIImage, level: Double) {
+        backFrameCounter &+= 1
+        if backFrameCounter % faceDetectionInterval == 0 {
+            lastBackFaces = BeautyProcessor.detectFaces(in: ciImage)
+        }
+        let output = level < 0.001
+            ? ciImage
+            : BeautyProcessor.beautifyCIImage(ciImage, level: level, faceRects: lastBackFaces)
+        backRenderer?.present(output)
+    }
+
+    /// frontVideoQueue（シリアル）でのみ呼ばれるため排他不要。
+    private func processFront(ciImage: CIImage, level: Double) {
+        frontFrameCounter &+= 1
+        if frontFrameCounter % faceDetectionInterval == 0 {
+            lastFrontFaces = BeautyProcessor.detectFaces(in: ciImage)
+        }
+        let output = level < 0.001
+            ? ciImage
+            : BeautyProcessor.beautifyCIImage(ciImage, level: level, faceRects: lastFrontFaces)
+        frontRenderer?.present(output)
     }
 }
 

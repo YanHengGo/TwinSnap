@@ -19,6 +19,9 @@ protocol CameraSessionType: AnyObject {
     func start()
     func stop()
     func capture(flashMode: AVCaptureDevice.FlashMode) async throws -> DualCapturedPhotos
+    /// プレビューへの美顔フィルター強度を反映する。
+    /// legacy セッションは no-op（プレビュー美顔は Phase B のみ）。
+    func setBeautyLevel(_ level: Double)
 }
 
 #endif

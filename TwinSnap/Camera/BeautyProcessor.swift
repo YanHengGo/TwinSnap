@@ -5,6 +5,9 @@
 //  美顔フィルター: Vision で顔を検出し、顔領域には周波数分離ベースの肌なめらか化を、
 //  顔が検出できなかった場合は画像全体に軽い Gaussian blur + ColorControls を適用する。
 //
+//  Phase A: 撮影後の UIImage 向け `apply(to:level:)`
+//  Phase B: プレビュー向け `beautifyCIImage(_:level:faceRects:)` + `detectFaces(in:)`
+//
 
 #if canImport(UIKit)
 import CoreImage
@@ -14,6 +17,8 @@ import Vision
 
 enum BeautyProcessor {
 
+    // MARK: - UIImage API (Phase A: 撮影後の後処理)
+
     /// beautyLevel: 0.0（無効） 〜 1.0（最大効果）
     static func apply(to image: UIImage, level: Double) -> UIImage {
         guard level > 0.001, let cgSource = image.cgImage else { return image }
@@ -21,19 +26,8 @@ enum BeautyProcessor {
         let ciImage = CIImage(cgImage: cgSource)
         let context = CIContext(options: [.useSoftwareRenderer: false])
 
-        let beautified = beautify(source: ciImage, strength: CGFloat(level))
         let faceRects = detectFaces(in: ciImage)
-
-        let composed: CIImage
-        if faceRects.isEmpty {
-            composed = beautified
-        } else {
-            let mask = faceMask(extent: ciImage.extent, faceRects: faceRects)
-            composed = beautified.applyingFilter("CIBlendWithMask", parameters: [
-                kCIInputBackgroundImageKey: ciImage,
-                kCIInputMaskImageKey: mask
-            ])
-        }
+        let composed = beautifyCIImage(ciImage, level: level, faceRects: faceRects)
 
         guard let cgOut = context.createCGImage(composed, from: ciImage.extent) else {
             return image
@@ -41,7 +35,56 @@ enum BeautyProcessor {
         return UIImage(cgImage: cgOut, scale: image.scale, orientation: image.imageOrientation)
     }
 
-    // MARK: - Beautify chain
+    // MARK: - CIImage API (Phase B: プレビュー用)
+
+    /// 事前に検出済みの `faceRects` を受け取り、美顔をかけた CIImage を返す。
+    /// - `level == 0` の場合は元 CIImage をそのまま返す（GPU 節約）。
+    /// - `faceRects` が空の場合は画像全体にフォールバック処理を適用する。
+    static func beautifyCIImage(
+        _ source: CIImage,
+        level: Double,
+        faceRects: [CGRect]
+    ) -> CIImage {
+        guard level > 0.001 else { return source }
+
+        let beautified = beautify(source: source, strength: CGFloat(level))
+
+        if faceRects.isEmpty {
+            return beautified
+        }
+        let mask = faceMask(extent: source.extent, faceRects: faceRects)
+        return beautified.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: source,
+            kCIInputMaskImageKey: mask
+        ])
+    }
+
+    /// Vision で顔矩形を検出。CIImage 座標系（原点左下）の CGRect を返す。
+    static func detectFaces(in image: CIImage) -> [CGRect] {
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(ciImage: image, orientation: .up, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return []
+        }
+        guard let observations = request.results else { return [] }
+
+        return observations.map { obs in
+            // Vision の boundingBox は正規化 [0,1]、原点は左下（CoreImage と同じ）
+            let box = obs.boundingBox
+            let rect = CGRect(
+                x: box.origin.x * image.extent.width,
+                y: box.origin.y * image.extent.height,
+                width: box.width * image.extent.width,
+                height: box.height * image.extent.height
+            )
+            // 額・アゴ・耳周りも含めるため 20% 拡張
+            return rect.insetBy(dx: -rect.width * 0.2, dy: -rect.height * 0.2)
+        }
+    }
+
+    // MARK: - Beautify chain (private)
 
     /// 周波数分離ベースの美顔:
     /// 1. Gaussian blur で低周波（肌の色調・面）を作る
@@ -71,32 +114,6 @@ enum BeautyProcessor {
         ])
 
         return toned.cropped(to: extent)
-    }
-
-    // MARK: - Face detection
-
-    private static func detectFaces(in image: CIImage) -> [CGRect] {
-        let request = VNDetectFaceRectanglesRequest()
-        let handler = VNImageRequestHandler(ciImage: image, orientation: .up, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return []
-        }
-        guard let observations = request.results else { return [] }
-
-        return observations.map { obs in
-            // Vision の boundingBox は正規化 [0,1]、原点は左下（CoreImage と同じ）
-            let box = obs.boundingBox
-            let rect = CGRect(
-                x: box.origin.x * image.extent.width,
-                y: box.origin.y * image.extent.height,
-                width: box.width * image.extent.width,
-                height: box.height * image.extent.height
-            )
-            // 額・アゴ・耳周りも含めるため 20% 拡張
-            return rect.insetBy(dx: -rect.width * 0.2, dy: -rect.height * 0.2)
-        }
     }
 
     // MARK: - Face mask (radial gradient)

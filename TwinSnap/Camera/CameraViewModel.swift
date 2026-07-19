@@ -21,7 +21,13 @@ final class CameraViewModel {
     var pipOffset: CGSize = .zero
     var flashMode: FlashMode = .off
     var canvasSize: CGSize = .zero
-    var beautyLevel: Double = 0
+    var beautyLevel: Double = 0 {
+        didSet {
+            #if os(iOS)
+            session?.setBeautyLevel(beautyLevel)
+            #endif
+        }
+    }
     var isBeautyControlPresented: Bool = false
     private(set) var isCapturing: Bool = false
     private(set) var toastMessage: String?
@@ -68,6 +74,7 @@ final class CameraViewModel {
                 newSession = legacy
             }
             session = newSession
+            newSession.setBeautyLevel(beautyLevel)
             applyDefaultLayoutFromSettings()
             launchState = .ready
             await refreshLatestThumbnail()
