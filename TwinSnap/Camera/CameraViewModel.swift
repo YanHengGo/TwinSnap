@@ -63,16 +63,7 @@ final class CameraViewModel {
         }
         #if os(iOS)
         do {
-            let newSession: any CameraSessionType
-            if settings.wysiwygBeautyPreviewEnabled {
-                let beauty = DualCameraBeautySession()
-                try beauty.configure()
-                newSession = beauty
-            } else {
-                let legacy = DualCameraSession()
-                try legacy.configure()
-                newSession = legacy
-            }
+            let newSession = try makeSession()
             session = newSession
             newSession.setBeautyLevel(beautyLevel)
             applyDefaultLayoutFromSettings()
@@ -85,6 +76,29 @@ final class CameraViewModel {
         launchState = .unsupported
         #endif
     }
+
+    #if os(iOS)
+    /// 設定に応じて Beauty / Legacy セッションを生成する。
+    /// Beauty 側で hardwareCost 超過（`hardwareCostExceeded`）が発生した場合は
+    /// 自動的に Legacy にフォールバックし、ユーザーへトーストで通知する。
+    private func makeSession() throws -> any CameraSessionType {
+        guard settings.wysiwygBeautyPreviewEnabled else {
+            let legacy = DualCameraSession()
+            try legacy.configure()
+            return legacy
+        }
+        do {
+            let beauty = DualCameraBeautySession()
+            try beauty.configure()
+            return beauty
+        } catch DualCameraSessionError.hardwareCostExceeded {
+            showToast("WYSIWYG プレビューはこの端末では利用できません（撮影後の美顔は動作します）")
+            let legacy = DualCameraSession()
+            try legacy.configure()
+            return legacy
+        }
+    }
+    #endif
 
     private func applyDefaultLayoutFromSettings() {
         layout = (settings.defaultLayout == .pip) ? .pip : .stacked

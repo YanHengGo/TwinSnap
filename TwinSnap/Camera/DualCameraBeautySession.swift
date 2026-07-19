@@ -52,6 +52,15 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var lastBackFaces: [CGRect] = []
     private var lastFrontFaces: [CGRect] = []
 
+    // MARK: - Devices (for negotiate)
+
+    private var backDevice: AVCaptureDevice?
+    private var frontDevice: AVCaptureDevice?
+    private var rankedFormatPairs: [MultiCamFormatSelector.FormatPair] = []
+
+    /// hardwareCost しきい値。これを上回ると降格を試行。
+    private let hardwareCostThreshold: Float = 0.95
+
     func configure() throws {
         guard AVCaptureMultiCamSession.isMultiCamSupported else {
             throw DualCameraSessionError.multiCamNotSupported
@@ -62,7 +71,9 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         guard let front = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
             throw DualCameraSessionError.noFrontCamera
         }
-        guard let (backFormat, frontFormat) = MultiCamFormatSelector.selectBestFormatPair(back: back, front: front) else {
+
+        let ranked = MultiCamFormatSelector.selectRankedFormatPairs(back: back, front: front)
+        guard let bestPair = ranked.first else {
             throw DualCameraSessionError.noCompatibleFormat
         }
 
@@ -72,12 +83,26 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         }
         self.backRenderer = backRenderer
         self.frontRenderer = frontRenderer
+        self.backDevice = back
+        self.frontDevice = front
+        self.rankedFormatPairs = ranked
 
+        try initialConfigure(back: back, front: front, formatPair: bestPair)
+
+        // 初期構成後に hardwareCost をチェック。超過なら降格ラダーで再試行。
+        try negotiateCostLimit(back: back, front: front)
+    }
+
+    private func initialConfigure(
+        back: AVCaptureDevice,
+        front: AVCaptureDevice,
+        formatPair: MultiCamFormatSelector.FormatPair
+    ) throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        try configureDevice(back, format: backFormat)
-        try configureDevice(front, format: frontFormat)
+        try configureDevice(back, format: formatPair.back)
+        try configureDevice(front, format: formatPair.front)
 
         let backPort = try addInput(for: back, position: .back)
         let frontPort = try addInput(for: front, position: .front)
@@ -87,6 +112,48 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
 
         try addPhotoOutputConnection(output: backPhotoOutput, port: backPort, mirrored: false)
         try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: false)
+    }
+
+    /// 4段階の降格ラダー。設計書 Phase B-3 5.3 の pseudo-code に準拠。
+    /// (fps, formatIndex) の順で試行し、最初に閾値以下になったら成功。
+    private func negotiateCostLimit(back: AVCaptureDevice, front: AVCaptureDevice) throws {
+        if session.hardwareCost <= hardwareCostThreshold {
+            return
+        }
+
+        struct Attempt {
+            let fps: Double
+            let formatIndex: Int
+        }
+        let attempts: [Attempt] = [
+            Attempt(fps: 24, formatIndex: 0),
+            Attempt(fps: 20, formatIndex: 0),
+            Attempt(fps: 24, formatIndex: 1),
+            Attempt(fps: 20, formatIndex: 2)
+        ]
+
+        for attempt in attempts {
+            guard attempt.formatIndex < rankedFormatPairs.count else { continue }
+            let pair = rankedFormatPairs[attempt.formatIndex]
+            try applyDegradedConfiguration(back: back, front: front, pair: pair, fps: attempt.fps)
+            if session.hardwareCost <= hardwareCostThreshold {
+                return
+            }
+        }
+        throw DualCameraSessionError.hardwareCostExceeded
+    }
+
+    private func applyDegradedConfiguration(
+        back: AVCaptureDevice,
+        front: AVCaptureDevice,
+        pair: MultiCamFormatSelector.FormatPair,
+        fps: Double
+    ) throws {
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        try configureDevice(back, format: pair.back, fps: fps)
+        try configureDevice(front, format: pair.front, fps: fps)
     }
 
     func start() {
@@ -125,13 +192,22 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
 
     // MARK: - Private setup
 
-    private func configureDevice(_ device: AVCaptureDevice, format: AVCaptureDevice.Format) throws {
+    private func configureDevice(
+        _ device: AVCaptureDevice,
+        format: AVCaptureDevice.Format,
+        fps: Double? = nil
+    ) throws {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
         device.activeFormat = format
         if device.activeFormat.isVideoHDRSupported {
             device.automaticallyAdjustsVideoHDREnabled = false
             device.isVideoHDREnabled = false
+        }
+        if let fps {
+            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+            device.activeVideoMinFrameDuration = frameDuration
+            device.activeVideoMaxFrameDuration = frameDuration
         }
     }
 

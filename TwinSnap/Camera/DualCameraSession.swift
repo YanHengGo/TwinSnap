@@ -20,6 +20,7 @@ enum DualCameraSessionError: Error {
     case cannotAddConnection
     case noPort
     case captureFailed
+    case hardwareCostExceeded
 }
 
 struct DualCapturedPhotos {
