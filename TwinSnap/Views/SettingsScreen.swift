@@ -14,6 +14,7 @@ struct SettingsScreen: View {
     let onDismiss: () -> Void
 
     @State private var showAbout: Bool = false
+    @State private var showRestartHint: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -21,7 +22,7 @@ struct SettingsScreen: View {
                 cameraSection
                 qualitySection
                 otherSection
-                debugSection
+                experimentalSection
             }
             .scrollContentBackground(.hidden)
             .background(Color.black.ignoresSafeArea())
@@ -36,6 +37,7 @@ struct SettingsScreen: View {
             .navigationDestination(isPresented: $showAbout) {
                 AboutScreen()
             }
+            .overlay(alignment: .top) { restartHintOverlay }
         }
         .preferredColorScheme(.dark)
     }
@@ -100,19 +102,49 @@ struct SettingsScreen: View {
         }
     }
 
-    private var debugSection: some View {
+    private var experimentalSection: some View {
         Section {
             Toggle(isOn: Binding(
                 get: { settings.wysiwygBeautyPreviewEnabled },
-                set: { settings.wysiwygBeautyPreviewEnabled = $0 }
+                set: { newValue in
+                    settings.wysiwygBeautyPreviewEnabled = newValue
+                    showRestartHintToast()
+                }
             )) {
                 Text("WYSIWYG 美顔プレビュー")
             }
         } header: {
-            Text("デバッグ")
+            Text("実験機能")
         } footer: {
-            Text("プレビューに美顔フィルターをリアルタイム反映します。変更後はアプリを再起動してください。実験機能のため予期しない挙動が起こる可能性があります。")
+            Text("プレビューに美顔フィルターをリアルタイム反映します。変更後はアプリを再起動してください。端末が高温になった場合は自動的にオフになります。")
                 .font(.caption)
+        }
+    }
+
+    @ViewBuilder
+    private var restartHintOverlay: some View {
+        if showRestartHint {
+            Text("変更を反映するにはアプリを再起動してください")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func showRestartHintToast() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            showRestartHint = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation(.easeOut(duration: 0.25)) {
+                showRestartHint = false
+            }
         }
     }
 }

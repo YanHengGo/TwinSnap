@@ -27,14 +27,14 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         frontRenderer.map { .beauty($0) }
     }
 
-    private let backPhotoOutput = AVCapturePhotoOutput()
-    private let frontPhotoOutput = AVCapturePhotoOutput()
-    private let backVideoOutput = AVCaptureVideoDataOutput()
-    private let frontVideoOutput = AVCaptureVideoDataOutput()
+    let backPhotoOutput = AVCapturePhotoOutput()
+    let frontPhotoOutput = AVCapturePhotoOutput()
+    let backVideoOutput = AVCaptureVideoDataOutput()
+    let frontVideoOutput = AVCaptureVideoDataOutput()
 
     private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.session")
-    private let backVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.back.video")
-    private let frontVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.front.video")
+    let backVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.back.video")
+    let frontVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.front.video")
 
     private var captureDelegates: [Int64: PhotoCaptureDelegate] = [:]
     private let delegateLock = NSLock()
@@ -47,6 +47,9 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var beautyLevel: Double = 0
     private let beautyLevelLock = NSLock()
 
+    private var isBeautySuppressed: Bool = false
+    private let suppressionLock = NSLock()
+
     private var backFrameCounter: Int = 0
     private var frontFrameCounter: Int = 0
     private var lastBackFaces: [CGRect] = []
@@ -56,10 +59,10 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
 
     private var backDevice: AVCaptureDevice?
     private var frontDevice: AVCaptureDevice?
-    private var rankedFormatPairs: [MultiCamFormatSelector.FormatPair] = []
+    var rankedFormatPairs: [MultiCamFormatSelector.FormatPair] = []
 
     /// hardwareCost しきい値。これを上回ると降格を試行。
-    private let hardwareCostThreshold: Float = 0.95
+    let hardwareCostThreshold: Float = 0.95
 
     func configure() throws {
         guard AVCaptureMultiCamSession.isMultiCamSupported else {
@@ -93,69 +96,6 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         try negotiateCostLimit(back: back, front: front)
     }
 
-    private func initialConfigure(
-        back: AVCaptureDevice,
-        front: AVCaptureDevice,
-        formatPair: MultiCamFormatSelector.FormatPair
-    ) throws {
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
-
-        try configureDevice(back, format: formatPair.back)
-        try configureDevice(front, format: formatPair.front)
-
-        let backPort = try addInput(for: back, position: .back)
-        let frontPort = try addInput(for: front, position: .front)
-
-        try addVideoDataOutput(output: backVideoOutput, port: backPort, queue: backVideoQueue, mirrored: false)
-        try addVideoDataOutput(output: frontVideoOutput, port: frontPort, queue: frontVideoQueue, mirrored: true)
-
-        try addPhotoOutputConnection(output: backPhotoOutput, port: backPort, mirrored: false)
-        try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: false)
-    }
-
-    /// 4段階の降格ラダー。設計書 Phase B-3 5.3 の pseudo-code に準拠。
-    /// (fps, formatIndex) の順で試行し、最初に閾値以下になったら成功。
-    private func negotiateCostLimit(back: AVCaptureDevice, front: AVCaptureDevice) throws {
-        if session.hardwareCost <= hardwareCostThreshold {
-            return
-        }
-
-        struct Attempt {
-            let fps: Double
-            let formatIndex: Int
-        }
-        let attempts: [Attempt] = [
-            Attempt(fps: 24, formatIndex: 0),
-            Attempt(fps: 20, formatIndex: 0),
-            Attempt(fps: 24, formatIndex: 1),
-            Attempt(fps: 20, formatIndex: 2)
-        ]
-
-        for attempt in attempts {
-            guard attempt.formatIndex < rankedFormatPairs.count else { continue }
-            let pair = rankedFormatPairs[attempt.formatIndex]
-            try applyDegradedConfiguration(back: back, front: front, pair: pair, fps: attempt.fps)
-            if session.hardwareCost <= hardwareCostThreshold {
-                return
-            }
-        }
-        throw DualCameraSessionError.hardwareCostExceeded
-    }
-
-    private func applyDegradedConfiguration(
-        back: AVCaptureDevice,
-        front: AVCaptureDevice,
-        pair: MultiCamFormatSelector.FormatPair,
-        fps: Double
-    ) throws {
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
-
-        try configureDevice(back, format: pair.back, fps: fps)
-        try configureDevice(front, format: pair.front, fps: fps)
-    }
-
     func start() {
         sessionQueue.async { [session] in
             guard !session.isRunning else { return }
@@ -183,6 +123,12 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         beautyLevelLock.unlock()
     }
 
+    func setBeautySuppressed(_ suppressed: Bool) {
+        suppressionLock.lock()
+        isBeautySuppressed = suppressed
+        suppressionLock.unlock()
+    }
+
     private func currentBeautyLevel() -> Double {
         beautyLevelLock.lock()
         let level = beautyLevel
@@ -190,96 +136,11 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         return level
     }
 
-    // MARK: - Private setup
-
-    private func configureDevice(
-        _ device: AVCaptureDevice,
-        format: AVCaptureDevice.Format,
-        fps: Double? = nil
-    ) throws {
-        try device.lockForConfiguration()
-        defer { device.unlockForConfiguration() }
-        device.activeFormat = format
-        if device.activeFormat.isVideoHDRSupported {
-            device.automaticallyAdjustsVideoHDREnabled = false
-            device.isVideoHDREnabled = false
-        }
-        if let fps {
-            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
-            device.activeVideoMinFrameDuration = frameDuration
-            device.activeVideoMaxFrameDuration = frameDuration
-        }
-    }
-
-    private func addInput(for device: AVCaptureDevice, position: AVCaptureDevice.Position) throws -> AVCaptureInput.Port {
-        let input = try AVCaptureDeviceInput(device: device)
-        guard session.canAddInput(input) else {
-            throw DualCameraSessionError.cannotAddInput
-        }
-        session.addInputWithNoConnections(input)
-        guard let port = input.ports(
-            for: .video,
-            sourceDeviceType: .builtInWideAngleCamera,
-            sourceDevicePosition: position
-        ).first else {
-            throw DualCameraSessionError.noPort
-        }
-        return port
-    }
-
-    private func addVideoDataOutput(
-        output: AVCaptureVideoDataOutput,
-        port: AVCaptureInput.Port,
-        queue: DispatchQueue,
-        mirrored: Bool
-    ) throws {
-        output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-        output.alwaysDiscardsLateVideoFrames = true
-        output.setSampleBufferDelegate(self, queue: queue)
-
-        guard session.canAddOutput(output) else {
-            throw DualCameraSessionError.cannotAddOutput
-        }
-        session.addOutputWithNoConnections(output)
-
-        let connection = AVCaptureConnection(inputPorts: [port], output: output)
-        if connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
-        }
-        if mirrored, connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = true
-        }
-        guard session.canAddConnection(connection) else {
-            throw DualCameraSessionError.cannotAddConnection
-        }
-        session.addConnection(connection)
-    }
-
-    private func addPhotoOutputConnection(
-        output: AVCapturePhotoOutput,
-        port: AVCaptureInput.Port,
-        mirrored: Bool
-    ) throws {
-        guard session.canAddOutput(output) else {
-            throw DualCameraSessionError.cannotAddOutput
-        }
-        session.addOutputWithNoConnections(output)
-
-        let connection = AVCaptureConnection(inputPorts: [port], output: output)
-        if connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
-        }
-        if mirrored, connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = false
-        }
-        guard session.canAddConnection(connection) else {
-            throw DualCameraSessionError.cannotAddConnection
-        }
-        session.addConnection(connection)
+    private func currentSuppressed() -> Bool {
+        suppressionLock.lock()
+        let suppressed = isBeautySuppressed
+        suppressionLock.unlock()
+        return suppressed
     }
 
     // MARK: - Photo capture (共有ロジック)
@@ -325,7 +186,8 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
     ) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let level = currentBeautyLevel()
+        // 熱シャットダウン保護等で suppressed の場合は美顔チェーンを完全にスキップする
+        let level = currentSuppressed() ? 0 : currentBeautyLevel()
 
         if output === backVideoOutput {
             processBack(ciImage: ciImage, level: level)
