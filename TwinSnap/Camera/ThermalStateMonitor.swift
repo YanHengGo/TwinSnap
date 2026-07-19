@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import OSLog
 
 @Observable
 final class ThermalStateMonitor {
@@ -45,6 +46,7 @@ final class ThermalStateMonitor {
     private func handleThermalChange() {
         let state = ProcessInfo.processInfo.thermalState
         currentState = state
+        Logger.thermal.info("Thermal state changed: \(String(describing: state), privacy: .public)")
 
         pendingWorkItem?.cancel()
         pendingWorkItem = nil
@@ -63,6 +65,7 @@ final class ThermalStateMonitor {
     private func checkSustainedFire() {
         let current = ProcessInfo.processInfo.thermalState
         guard current == .serious || current == .critical else { return }
+        Logger.thermal.notice("Sustained thermal state \(String(describing: current), privacy: .public) for \(self.sustainedSeconds) seconds; firing callback")
         onSeriousSustained?()
     }
 }

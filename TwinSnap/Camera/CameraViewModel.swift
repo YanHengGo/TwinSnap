@@ -7,6 +7,7 @@
 
 import AVFoundation
 import CoreGraphics
+import OSLog
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -93,6 +94,7 @@ final class CameraViewModel {
     private func handleThermalSuppression() {
         // 既に停止済み（トグル OFF）なら再発火しない
         guard settings.wysiwygBeautyPreviewEnabled else { return }
+        Logger.thermal.notice("Thermal suppression triggered; disabling beauty preview and persisting toggle OFF")
         session?.setBeautySuppressed(true)
         settings.wysiwygBeautyPreviewEnabled = false
         showToast("端末が高温になったため WYSIWYG 美顔を停止しました")
@@ -105,15 +107,18 @@ final class CameraViewModel {
     /// 自動的に Legacy にフォールバックし、ユーザーへトーストで通知する。
     private func makeSession() throws -> any CameraSessionType {
         guard settings.wysiwygBeautyPreviewEnabled else {
+            Logger.session.info("Bootstrapping legacy DualCameraSession (toggle OFF)")
             let legacy = DualCameraSession()
             try legacy.configure()
             return legacy
         }
         do {
+            Logger.session.info("Bootstrapping DualCameraBeautySession (toggle ON)")
             let beauty = DualCameraBeautySession()
             try beauty.configure()
             return beauty
         } catch DualCameraSessionError.hardwareCostExceeded {
+            Logger.session.notice("hardwareCost exceeded; falling back to legacy DualCameraSession")
             showToast("WYSIWYG プレビューはこの端末では利用できません（撮影後の美顔は動作します）")
             let legacy = DualCameraSession()
             try legacy.configure()
