@@ -47,6 +47,9 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var beautyLevel: Double = 0
     private let beautyLevelLock = NSLock()
 
+    private var isBeautySuppressed: Bool = false
+    private let suppressionLock = NSLock()
+
     private var backFrameCounter: Int = 0
     private var frontFrameCounter: Int = 0
     private var lastBackFaces: [CGRect] = []
@@ -183,11 +186,24 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         beautyLevelLock.unlock()
     }
 
+    func setBeautySuppressed(_ suppressed: Bool) {
+        suppressionLock.lock()
+        isBeautySuppressed = suppressed
+        suppressionLock.unlock()
+    }
+
     private func currentBeautyLevel() -> Double {
         beautyLevelLock.lock()
         let level = beautyLevel
         beautyLevelLock.unlock()
         return level
+    }
+
+    private func currentSuppressed() -> Bool {
+        suppressionLock.lock()
+        let suppressed = isBeautySuppressed
+        suppressionLock.unlock()
+        return suppressed
     }
 
     // MARK: - Private setup
@@ -325,7 +341,8 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
     ) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let level = currentBeautyLevel()
+        // 熱シャットダウン保護等で suppressed の場合は美顔チェーンを完全にスキップする
+        let level = currentSuppressed() ? 0 : currentBeautyLevel()
 
         if output === backVideoOutput {
             processBack(ciImage: ciImage, level: level)

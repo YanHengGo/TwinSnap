@@ -102,6 +102,9 @@ final class DualCameraSession: NSObject, CameraSessionType {
     /// legacy 経路はプレビュー美顔なし。撮影後の Phase A で対応するため no-op。
     func setBeautyLevel(_ level: Double) {}
 
+    /// legacy 経路にはプレビュー美顔チェーンが存在しないため no-op。
+    func setBeautySuppressed(_ suppressed: Bool) {}
+
     /// 前後カメラの写真を同時にキャプチャする。両方揃った時点で返す。
     func capture(flashMode: AVCaptureDevice.FlashMode) async throws -> DualCapturedPhotos {
         async let backData = capturePhoto(from: backPhotoOutput, flashMode: flashMode)

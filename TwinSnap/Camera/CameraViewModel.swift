@@ -39,6 +39,7 @@ final class CameraViewModel {
     private(set) var lastCapturedPhotos: DualCapturedPhotos?
     private(set) var latestThumbnail: UIImage?
     var isPreviewPresented: Bool = false
+    private var thermalMonitor: ThermalStateMonitor?
     #endif
 
     let settings: AppSettings
@@ -66,6 +67,9 @@ final class CameraViewModel {
             let newSession = try makeSession()
             session = newSession
             newSession.setBeautyLevel(beautyLevel)
+            if newSession is DualCameraBeautySession {
+                startThermalMonitoring()
+            }
             applyDefaultLayoutFromSettings()
             launchState = .ready
             await refreshLatestThumbnail()
@@ -76,6 +80,24 @@ final class CameraViewModel {
         launchState = .unsupported
         #endif
     }
+
+    #if os(iOS)
+    private func startThermalMonitoring() {
+        let monitor = ThermalStateMonitor()
+        monitor.onSeriousSustained = { [weak self] in
+            self?.handleThermalSuppression()
+        }
+        thermalMonitor = monitor
+    }
+
+    private func handleThermalSuppression() {
+        // 既に停止済み（トグル OFF）なら再発火しない
+        guard settings.wysiwygBeautyPreviewEnabled else { return }
+        session?.setBeautySuppressed(true)
+        settings.wysiwygBeautyPreviewEnabled = false
+        showToast("端末が高温になったため WYSIWYG 美顔を停止しました")
+    }
+    #endif
 
     #if os(iOS)
     /// 設定に応じて Beauty / Legacy セッションを生成する。
