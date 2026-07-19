@@ -19,10 +19,15 @@ struct CameraHUD: View {
             VStack {
                 header
                 Spacer()
+                if viewModel.isBeautyControlPresented {
+                    beautySlider
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 footer
             }
             toastOverlay
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.isBeautyControlPresented)
     }
 
     private var header: some View {
@@ -38,6 +43,14 @@ struct CameraHUD: View {
             Spacer()
 
             HStack(spacing: 10) {
+                glassButton {
+                    viewModel.isBeautyControlPresented.toggle()
+                } content: {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(viewModel.beautyLevel > 0.01 ? accent : .white.opacity(0.9))
+                }
+
                 glassButton {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         viewModel.toggleLayout()
@@ -59,6 +72,31 @@ struct CameraHUD: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    private var beautySlider: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(accent)
+
+            Slider(value: Binding(
+                get: { viewModel.beautyLevel },
+                set: { viewModel.beautyLevel = $0 }
+            ), in: 0...1)
+                .tint(accent)
+
+            Text("\(Int(viewModel.beautyLevel * 100))")
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+        .padding(.horizontal, 24)
+        .padding(.bottom, 8)
     }
 
     private var footer: some View {

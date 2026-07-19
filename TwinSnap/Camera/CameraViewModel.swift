@@ -69,6 +69,8 @@ final class CameraViewModel {
     var pipOffset: CGSize = .zero
     var flashMode: FlashMode = .off
     var canvasSize: CGSize = .zero
+    var beautyLevel: Double = 0
+    var isBeautyControlPresented: Bool = false
     private(set) var isCapturing: Bool = false
     private(set) var toastMessage: String?
     var isSettingsPresented: Bool = false
@@ -204,10 +206,12 @@ final class CameraViewModel {
 
     #if os(iOS)
     private func compose(photos: DualCapturedPhotos) -> UIImage? {
-        guard let backImage = UIImage(data: photos.back),
-              let frontImage = UIImage(data: photos.front) else {
+        guard let rawBack = UIImage(data: photos.back),
+              let rawFront = UIImage(data: photos.front) else {
             return nil
         }
+        let backImage = BeautyProcessor.apply(to: rawBack, level: beautyLevel)
+        let frontImage = BeautyProcessor.apply(to: rawFront, level: beautyLevel)
         let main: UIImage
         let sub: UIImage
         switch mainPosition {
