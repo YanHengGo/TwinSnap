@@ -75,29 +75,29 @@ struct CameraView: View {
         }
     }
 
-    private var mainPreviewLayer: AVCaptureVideoPreviewLayer? {
+    private var mainPreviewSource: PreviewSource? {
         switch viewModel.mainPosition {
-        case .back: return viewModel.dualSession?.backPreviewLayer
-        case .front: return viewModel.dualSession?.frontPreviewLayer
+        case .back: return viewModel.session?.backPreviewSource
+        case .front: return viewModel.session?.frontPreviewSource
         }
     }
 
-    private var subPreviewLayer: AVCaptureVideoPreviewLayer? {
+    private var subPreviewSource: PreviewSource? {
         switch viewModel.mainPosition {
-        case .back: return viewModel.dualSession?.frontPreviewLayer
-        case .front: return viewModel.dualSession?.backPreviewLayer
+        case .back: return viewModel.session?.frontPreviewSource
+        case .front: return viewModel.session?.backPreviewSource
         }
     }
 
     private var pipLayout: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                if let main = mainPreviewLayer {
-                    CameraPreviewView(previewLayer: main)
+                if let main = mainPreviewSource {
+                    CameraPreviewView(source: main)
                         .frame(width: proxy.size.width, height: proxy.size.height)
                 }
-                if let sub = subPreviewLayer {
-                    CameraPreviewView(previewLayer: sub)
+                if let sub = subPreviewSource {
+                    CameraPreviewView(source: sub)
                         .frame(width: pipSize.width, height: pipSize.height)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                         .overlay(
@@ -116,15 +116,15 @@ struct CameraView: View {
 
     private var stackedLayout: some View {
         VStack(spacing: 0) {
-            if let main = mainPreviewLayer {
-                CameraPreviewView(previewLayer: main)
+            if let main = mainPreviewSource {
+                CameraPreviewView(source: main)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             Rectangle()
                 .fill(Color.white.opacity(0.08))
                 .frame(height: 2)
-            if let sub = subPreviewLayer {
-                CameraPreviewView(previewLayer: sub)
+            if let sub = subPreviewSource {
+                CameraPreviewView(source: sub)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

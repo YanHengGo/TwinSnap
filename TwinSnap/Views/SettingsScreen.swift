@@ -21,6 +21,7 @@ struct SettingsScreen: View {
                 cameraSection
                 qualitySection
                 otherSection
+                debugSection
             }
             .scrollContentBackground(.hidden)
             .background(Color.black.ignoresSafeArea())
@@ -96,6 +97,22 @@ struct SettingsScreen: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private var debugSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { settings.wysiwygBeautyPreviewEnabled },
+                set: { settings.wysiwygBeautyPreviewEnabled = $0 }
+            )) {
+                Text("WYSIWYG 美顔プレビュー")
+            }
+        } header: {
+            Text("デバッグ")
+        } footer: {
+            Text("プレビューに美顔フィルターをリアルタイム反映します。変更後はアプリを再起動してください。実験機能のため予期しない挙動が起こる可能性があります。")
+                .font(.caption)
         }
     }
 }

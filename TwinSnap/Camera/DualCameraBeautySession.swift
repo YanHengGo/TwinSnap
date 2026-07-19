@@ -1,52 +1,40 @@
 //
-//  DualCameraSession.swift
+//  DualCameraBeautySession.swift
 //  TwinSnap
 //
-//  AVCaptureMultiCamSession のセットアップ・最適フォーマット選択・プレビュー/撮影出力。
+//  AVCaptureVideoDataOutput + MTKView によるプレビューパイプ。
+//  Phase B-1 では美顔チェーンを呼ばずに素通し（映像パススルー）。
+//  写真キャプチャは AVCapturePhotoOutput + Phase A の後処理を継続利用する。
 //
 
+#if os(iOS)
 import AVFoundation
+import CoreImage
 import Foundation
 
-#if os(iOS)
-
-enum DualCameraSessionError: Error {
-    case multiCamNotSupported
-    case noBackCamera
-    case noFrontCamera
-    case noCompatibleFormat
-    case cannotAddInput
-    case cannotAddOutput
-    case cannotAddConnection
-    case noPort
-    case captureFailed
-}
-
-struct DualCapturedPhotos {
-    let back: Data
-    let front: Data
-}
-
-final class DualCameraSession: NSObject, CameraSessionType {
+final class DualCameraBeautySession: NSObject, CameraSessionType {
 
     let session = AVCaptureMultiCamSession()
 
-    private(set) var backPreviewLayer: AVCaptureVideoPreviewLayer?
-    private(set) var frontPreviewLayer: AVCaptureVideoPreviewLayer?
+    private(set) var backRenderer: MetalPreviewRenderer?
+    private(set) var frontRenderer: MetalPreviewRenderer?
 
     var backPreviewSource: PreviewSource? {
-        backPreviewLayer.map { .legacy($0) }
+        backRenderer.map { .beauty($0) }
     }
 
     var frontPreviewSource: PreviewSource? {
-        frontPreviewLayer.map { .legacy($0) }
+        frontRenderer.map { .beauty($0) }
     }
 
     private let backPhotoOutput = AVCapturePhotoOutput()
     private let frontPhotoOutput = AVCapturePhotoOutput()
+    private let backVideoOutput = AVCaptureVideoDataOutput()
+    private let frontVideoOutput = AVCaptureVideoDataOutput()
 
-    private var backDevice: AVCaptureDevice?
-    private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.session")
+    private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.session")
+    private let backVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.back.video")
+    private let frontVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.front.video")
 
     private var captureDelegates: [Int64: PhotoCaptureDelegate] = [:]
     private let delegateLock = NSLock()
@@ -55,7 +43,6 @@ final class DualCameraSession: NSObject, CameraSessionType {
         guard AVCaptureMultiCamSession.isMultiCamSupported else {
             throw DualCameraSessionError.multiCamNotSupported
         }
-
         guard let back = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
             throw DualCameraSessionError.noBackCamera
         }
@@ -66,22 +53,27 @@ final class DualCameraSession: NSObject, CameraSessionType {
             throw DualCameraSessionError.noCompatibleFormat
         }
 
+        guard let backRenderer = MetalPreviewRenderer.makeShared(),
+              let frontRenderer = MetalPreviewRenderer.makeShared() else {
+            throw DualCameraSessionError.cannotAddOutput
+        }
+        self.backRenderer = backRenderer
+        self.frontRenderer = frontRenderer
+
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        try configure(device: back, format: backFormat)
-        try configure(device: front, format: frontFormat)
+        try configureDevice(back, format: backFormat)
+        try configureDevice(front, format: frontFormat)
 
         let backPort = try addInput(for: back, position: .back)
         let frontPort = try addInput(for: front, position: .front)
 
-        backPreviewLayer = try addPreviewConnection(port: backPort, mirrored: false)
-        frontPreviewLayer = try addPreviewConnection(port: frontPort, mirrored: true)
+        try addVideoDataOutput(output: backVideoOutput, port: backPort, queue: backVideoQueue, mirrored: false)
+        try addVideoDataOutput(output: frontVideoOutput, port: frontPort, queue: frontVideoQueue, mirrored: true)
 
         try addPhotoOutputConnection(output: backPhotoOutput, port: backPort, mirrored: false)
-        try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: true)
-
-        backDevice = back
+        try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: false)
     }
 
     func start() {
@@ -98,7 +90,6 @@ final class DualCameraSession: NSObject, CameraSessionType {
         }
     }
 
-    /// 前後カメラの写真を同時にキャプチャする。両方揃った時点で返す。
     func capture(flashMode: AVCaptureDevice.FlashMode) async throws -> DualCapturedPhotos {
         async let backData = capturePhoto(from: backPhotoOutput, flashMode: flashMode)
         async let frontData = capturePhoto(from: frontPhotoOutput, flashMode: .off)
@@ -106,9 +97,9 @@ final class DualCameraSession: NSObject, CameraSessionType {
         return DualCapturedPhotos(back: back, front: front)
     }
 
-    // MARK: - Private
+    // MARK: - Private setup
 
-    private func configure(device: AVCaptureDevice, format: AVCaptureDevice.Format) throws {
+    private func configureDevice(_ device: AVCaptureDevice, format: AVCaptureDevice.Format) throws {
         try device.lockForConfiguration()
         defer { device.unlockForConfiguration() }
         device.activeFormat = format
@@ -134,12 +125,27 @@ final class DualCameraSession: NSObject, CameraSessionType {
         return port
     }
 
-    private func addPreviewConnection(port: AVCaptureInput.Port, mirrored: Bool) throws -> AVCaptureVideoPreviewLayer {
-        let layer = AVCaptureVideoPreviewLayer()
-        layer.setSessionWithNoConnection(session)
-        layer.videoGravity = .resizeAspectFill
+    private func addVideoDataOutput(
+        output: AVCaptureVideoDataOutput,
+        port: AVCaptureInput.Port,
+        queue: DispatchQueue,
+        mirrored: Bool
+    ) throws {
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: queue)
 
-        let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: layer)
+        guard session.canAddOutput(output) else {
+            throw DualCameraSessionError.cannotAddOutput
+        }
+        session.addOutputWithNoConnections(output)
+
+        let connection = AVCaptureConnection(inputPorts: [port], output: output)
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
         if mirrored, connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored = true
@@ -148,7 +154,6 @@ final class DualCameraSession: NSObject, CameraSessionType {
             throw DualCameraSessionError.cannotAddConnection
         }
         session.addConnection(connection)
-        return layer
     }
 
     private func addPhotoOutputConnection(
@@ -162,19 +167,20 @@ final class DualCameraSession: NSObject, CameraSessionType {
         session.addOutputWithNoConnections(output)
 
         let connection = AVCaptureConnection(inputPorts: [port], output: output)
-        if mirrored, connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            // プレビューはミラーリングするが、保存する写真は反転しない
-            connection.isVideoMirrored = false
-        }
         if connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
+        }
+        if mirrored, connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
         }
         guard session.canAddConnection(connection) else {
             throw DualCameraSessionError.cannotAddConnection
         }
         session.addConnection(connection)
     }
+
+    // MARK: - Photo capture (共有ロジック)
 
     private func capturePhoto(
         from output: AVCapturePhotoOutput,
@@ -207,8 +213,8 @@ final class DualCameraSession: NSObject, CameraSessionType {
         delegateLock.unlock()
     }
 
-    /// 前後カメラ双方が MultiCam 対応するフォーマットの中から、
-    /// 「解像度最優先 → fps最大」で最良ペアを選ぶ。
+    // MARK: - Format selection (DualCameraSession と同じロジック)
+
     private static func selectBestFormatPair(
         back: AVCaptureDevice,
         front: AVCaptureDevice
@@ -251,6 +257,24 @@ final class DualCameraSession: NSObject, CameraSessionType {
             }
         }
         return best.map { ($0.backFormat, $0.frontFormat) }
+    }
+}
+
+extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+
+        if output === backVideoOutput {
+            backRenderer?.present(ciImage)
+        } else if output === frontVideoOutput {
+            frontRenderer?.present(ciImage)
+        }
     }
 }
 

@@ -2,17 +2,32 @@
 //  CameraPreviewView.swift
 //  TwinSnap
 //
-//  AVCaptureVideoPreviewLayer を SwiftUI 上に載せる UIViewRepresentable。
-//  MultiCam ではプレビューレイヤーをセッション外で生成する必要があるため、
-//  外側から生成済みレイヤーを受け取って描画する。
+//  PreviewSource に応じて legacy AVCaptureVideoPreviewLayer と新規 MTKView を透過的に切替えるディスパッチャ。
 //
 
 #if canImport(UIKit)
 import AVFoundation
+import MetalKit
 import SwiftUI
 import UIKit
 
-struct CameraPreviewView: UIViewRepresentable {
+struct CameraPreviewView: View {
+
+    let source: PreviewSource
+
+    var body: some View {
+        switch source {
+        case .legacy(let layer):
+            LegacyPreviewLayerView(previewLayer: layer)
+        case .beauty(let renderer):
+            MetalPreviewView(renderer: renderer)
+        }
+    }
+}
+
+// MARK: - Legacy AVCaptureVideoPreviewLayer 経路
+
+private struct LegacyPreviewLayerView: UIViewRepresentable {
 
     let previewLayer: AVCaptureVideoPreviewLayer
 
@@ -60,6 +75,19 @@ final class PreviewContainerView: UIView {
         layer.addSublayer(previewLayer)
         currentLayer = previewLayer
     }
+}
+
+// MARK: - MTKView 経路（Beauty session）
+
+private struct MetalPreviewView: UIViewRepresentable {
+
+    let renderer: MetalPreviewRenderer
+
+    func makeUIView(context: Context) -> MTKView {
+        renderer.mtkView
+    }
+
+    func updateUIView(_ uiView: MTKView, context: Context) {}
 }
 
 #endif

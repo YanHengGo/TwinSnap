@@ -76,7 +76,7 @@ final class CameraViewModel {
     var isSettingsPresented: Bool = false
 
     #if os(iOS)
-    private(set) var dualSession: DualCameraSession?
+    private(set) var session: (any CameraSessionType)?
     private(set) var composedImage: UIImage?
     private(set) var lastCapturedPhotos: DualCapturedPhotos?
     private(set) var latestThumbnail: UIImage?
@@ -105,9 +105,17 @@ final class CameraViewModel {
         }
         #if os(iOS)
         do {
-            let session = DualCameraSession()
-            try session.configure()
-            dualSession = session
+            let newSession: any CameraSessionType
+            if settings.wysiwygBeautyPreviewEnabled {
+                let beauty = DualCameraBeautySession()
+                try beauty.configure()
+                newSession = beauty
+            } else {
+                let legacy = DualCameraSession()
+                try legacy.configure()
+                newSession = legacy
+            }
+            session = newSession
             applyDefaultLayoutFromSettings()
             launchState = .ready
             await refreshLatestThumbnail()
@@ -125,13 +133,13 @@ final class CameraViewModel {
 
     func startSession() {
         #if os(iOS)
-        dualSession?.start()
+        session?.start()
         #endif
     }
 
     func stopSession() {
         #if os(iOS)
-        dualSession?.stop()
+        session?.stop()
         #endif
     }
 
@@ -149,7 +157,7 @@ final class CameraViewModel {
 
     func capture() async {
         #if os(iOS)
-        guard let session = dualSession, !isCapturing else { return }
+        guard let session, !isCapturing else { return }
         isCapturing = true
         defer { isCapturing = false }
         do {

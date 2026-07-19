@@ -47,6 +47,12 @@ final class AppSettings {
         didSet { store.set(saveMode.rawValue, forKey: Keys.saveMode) }
     }
 
+    /// Phase B: WYSIWYG 美顔プレビュー（VideoDataOutput + MTKView パス）を使うか。
+    /// B-1 時点ではデバッグ用トグル。B-4 で「実験機能」として正式 UI 化する。
+    var wysiwygBeautyPreviewEnabled: Bool {
+        didSet { store.set(wysiwygBeautyPreviewEnabled, forKey: Keys.wysiwygBeautyPreviewEnabled) }
+    }
+
     private let store: UserDefaults
 
     init(store: UserDefaults = .standard) {
@@ -63,10 +69,12 @@ final class AppSettings {
         } else {
             self.saveMode = .composedAndOriginals
         }
+        self.wysiwygBeautyPreviewEnabled = store.bool(forKey: Keys.wysiwygBeautyPreviewEnabled)
     }
 
     private enum Keys {
         static let defaultLayout = "settings.defaultLayout"
         static let saveMode = "settings.saveMode"
+        static let wysiwygBeautyPreviewEnabled = "settings.wysiwygBeautyPreviewEnabled"
     }
 }
