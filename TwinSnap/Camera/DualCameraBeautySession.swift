@@ -146,6 +146,28 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         Logger.beauty.notice("Beauty chain suppression=\(suppressed)")
     }
 
+    // MARK: - Video recording (Phase C-1)
+
+    var isRecording: Bool { backMovieFileOutput.isRecording }
+
+    func startRecording(to url: URL, delegate: AVCaptureFileOutputRecordingDelegate) {
+        guard !backMovieFileOutput.isRecording else {
+            Logger.session.notice("startRecording ignored: already recording")
+            return
+        }
+        Logger.session.info("startRecording to \(url.lastPathComponent, privacy: .public)")
+        backMovieFileOutput.startRecording(to: url, recordingDelegate: delegate)
+    }
+
+    func stopRecording() {
+        guard backMovieFileOutput.isRecording else {
+            Logger.session.notice("stopRecording ignored: not recording")
+            return
+        }
+        Logger.session.info("stopRecording")
+        backMovieFileOutput.stopRecording()
+    }
+
     private func currentBeautyLevel() -> Double {
         beautyLevelLock.lock()
         let level = beautyLevel

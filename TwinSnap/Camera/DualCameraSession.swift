@@ -119,6 +119,28 @@ final class DualCameraSession: NSObject, CameraSessionType {
     /// legacy 経路にはプレビュー美顔チェーンが存在しないため no-op。
     func setBeautySuppressed(_ suppressed: Bool) {}
 
+    // MARK: - Video recording (Phase C-1)
+
+    var isRecording: Bool { backMovieFileOutput.isRecording }
+
+    func startRecording(to url: URL, delegate: AVCaptureFileOutputRecordingDelegate) {
+        guard !backMovieFileOutput.isRecording else {
+            Logger.session.notice("startRecording ignored: already recording")
+            return
+        }
+        Logger.session.info("startRecording to \(url.lastPathComponent, privacy: .public)")
+        backMovieFileOutput.startRecording(to: url, recordingDelegate: delegate)
+    }
+
+    func stopRecording() {
+        guard backMovieFileOutput.isRecording else {
+            Logger.session.notice("stopRecording ignored: not recording")
+            return
+        }
+        Logger.session.info("stopRecording")
+        backMovieFileOutput.stopRecording()
+    }
+
     /// 前後カメラの写真を同時にキャプチャする。両方揃った時点で返す。
     func capture(flashMode: AVCaptureDevice.FlashMode) async throws -> DualCapturedPhotos {
         async let backData = capturePhoto(from: backPhotoOutput, flashMode: flashMode)
