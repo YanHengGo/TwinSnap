@@ -48,6 +48,10 @@ file_length:
   warning: 500
   error: 800
 
+type_body_length:
+  warning: 300
+  error: 500
+
 function_body_length:
   warning: 60
   error: 120
