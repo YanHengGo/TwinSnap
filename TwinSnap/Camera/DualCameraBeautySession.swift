@@ -93,7 +93,11 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
 
         let backDim = CMVideoFormatDescriptionGetDimensions(bestPair.back.formatDescription)
         let frontDim = CMVideoFormatDescriptionGetDimensions(bestPair.front.formatDescription)
-        Logger.session.info("Configuring beauty session: back=\(backDim.width)x\(backDim.height) front=\(frontDim.width)x\(frontDim.height) rankedPairs=\(ranked.count)")
+        let backSize = "\(backDim.width)x\(backDim.height)"
+        let frontSize = "\(frontDim.width)x\(frontDim.height)"
+        Logger.session.info(
+            "Configuring beauty session: back=\(backSize) front=\(frontSize) rankedPairs=\(ranked.count)"
+        )
 
         try initialConfigure(back: back, front: front, formatPair: bestPair)
 

@@ -65,7 +65,10 @@ final class ThermalStateMonitor {
     private func checkSustainedFire() {
         let current = ProcessInfo.processInfo.thermalState
         guard current == .serious || current == .critical else { return }
-        Logger.thermal.notice("Sustained thermal state \(String(describing: current), privacy: .public) for \(self.sustainedSeconds) seconds; firing callback")
+        let stateName = String(describing: current)
+        Logger.thermal.notice(
+            "Sustained thermal state \(stateName, privacy: .public) for \(self.sustainedSeconds)s; firing callback"
+        )
         onSeriousSustained?()
     }
 }
