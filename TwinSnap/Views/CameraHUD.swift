@@ -26,8 +26,10 @@ struct CameraHUD: View {
                 footer
             }
             toastOverlay
+            recordingIndicatorOverlay
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.isBeautyControlPresented)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.isRecording)
     }
 
     private var header: some View {
@@ -72,6 +74,8 @@ struct CameraHUD: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
+        .disabled(viewModel.isRecording)
+        .opacity(viewModel.isRecording ? 0.4 : 1.0)
     }
 
     private var beautySlider: some View {
@@ -100,15 +104,32 @@ struct CameraHUD: View {
     }
 
     private var footer: some View {
-        HStack {
-            thumbnail
-            Spacer()
-            shutter
-            Spacer()
-            swapButton
+        VStack(spacing: 14) {
+            modeSegment
+            HStack {
+                thumbnail
+                Spacer()
+                shutter
+                Spacer()
+                swapButton
+            }
         }
         .padding(.horizontal, 30)
         .padding(.bottom, 32)
+    }
+
+    private var modeSegment: some View {
+        Picker("", selection: Binding(
+            get: { viewModel.captureMode },
+            set: { viewModel.setCaptureMode($0) }
+        )) {
+            Text("写真").tag(CameraViewModel.CaptureMode.photo)
+            Text("動画").tag(CameraViewModel.CaptureMode.video)
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 180)
+        .disabled(viewModel.isRecording)
+        .opacity(viewModel.isRecording ? 0.4 : 1.0)
     }
 
     private var thumbnail: some View {
@@ -131,24 +152,61 @@ struct CameraHUD: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
         )
+        .disabled(viewModel.isRecording)
+        .opacity(viewModel.isRecording ? 0.4 : 1.0)
     }
 
     private var shutter: some View {
         Button {
-            Task { await viewModel.capture() }
+            handleShutterTap()
         } label: {
             ZStack {
                 Circle()
-                    .stroke(accent, lineWidth: 4)
+                    .stroke(viewModel.captureMode == .video ? Color.red : accent, lineWidth: 4)
                     .frame(width: 78, height: 78)
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 64, height: 64)
-                    .scaleEffect(viewModel.isCapturing ? 0.85 : 1.0)
-                    .animation(.easeOut(duration: 0.15), value: viewModel.isCapturing)
+                shutterInner
             }
         }
         .disabled(viewModel.isCapturing)
+    }
+
+    @ViewBuilder
+    private var shutterInner: some View {
+        switch viewModel.captureMode {
+        case .photo:
+            Circle()
+                .fill(Color.white)
+                .frame(width: 64, height: 64)
+                .scaleEffect(viewModel.isCapturing ? 0.85 : 1.0)
+                .animation(.easeOut(duration: 0.15), value: viewModel.isCapturing)
+        case .video:
+            if viewModel.isRecording {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red)
+                    .frame(width: 32, height: 32)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.isRecording)
+            } else {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 64, height: 64)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.isRecording)
+            }
+        }
+    }
+
+    private func handleShutterTap() {
+        switch viewModel.captureMode {
+        case .photo:
+            Task { await viewModel.capture() }
+        case .video:
+            #if os(iOS)
+            if viewModel.isRecording {
+                viewModel.stopVideoRecording()
+            } else {
+                viewModel.startVideoRecording()
+            }
+            #endif
+        }
     }
 
     private var swapButton: some View {
@@ -164,6 +222,35 @@ struct CameraHUD: View {
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
         }
+        .disabled(viewModel.isRecording)
+        .opacity(viewModel.isRecording ? 0.4 : 1.0)
+    }
+
+    private var recordingIndicatorOverlay: some View {
+        VStack {
+            if viewModel.isRecording {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 10, height: 10)
+                    Text(formattedElapsed)
+                        .font(.footnote.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                .padding(.top, 60)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Spacer()
+        }
+    }
+
+    private var formattedElapsed: String {
+        let total = viewModel.recordingElapsedSeconds
+        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
     private func glassButton<Content: View>(
