@@ -257,6 +257,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "前面と背面のカメラを同時に使ってTwinSnapで写真を撮影するために、カメラへのアクセスを許可してください。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "音声付き動画を撮影するために、マイクへのアクセスを許可してください。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "撮影した写真をフォトライブラリへ保存するために、追加権限を許可してください。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "撮影画面に直近の写真サムネイルを表示するために、フォトライブラリへのアクセスを許可してください。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -292,6 +293,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "前面と背面のカメラを同時に使ってTwinSnapで写真を撮影するために、カメラへのアクセスを許可してください。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "音声付き動画を撮影するために、マイクへのアクセスを許可してください。";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "撮影した写真をフォトライブラリへ保存するために、追加権限を許可してください。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "撮影画面に直近の写真サムネイルを表示するために、フォトライブラリへのアクセスを許可してください。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import OSLog
 
 #if os(iOS)
 
@@ -46,6 +47,10 @@ final class DualCameraSession: NSObject, CameraSessionType {
     private let backPhotoOutput = AVCapturePhotoOutput()
     private let frontPhotoOutput = AVCapturePhotoOutput()
 
+    /// Phase C-1: 背面カメラ用の動画出力。C-1-2 で録画の start/stop 実装。
+    let backMovieFileOutput = AVCaptureMovieFileOutput()
+    private var audioDeviceInput: AVCaptureDeviceInput?
+
     private var backDevice: AVCaptureDevice?
     private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.session")
 
@@ -81,6 +86,15 @@ final class DualCameraSession: NSObject, CameraSessionType {
 
         try addPhotoOutputConnection(output: backPhotoOutput, port: backPort, mirrored: false)
         try addPhotoOutputConnection(output: frontPhotoOutput, port: frontPort, mirrored: true)
+
+        // Phase C-1: audio input + MovieFileOutput（背面のみ）を接続。
+        // マイク権限拒否時は音声なし動画として続行。
+        let audioPort = addAudioInputIfAvailable()
+        try addMovieFileOutputConnections(
+            output: backMovieFileOutput,
+            videoPort: backPort,
+            audioPort: audioPort
+        )
 
         backDevice = back
     }
@@ -181,6 +195,61 @@ final class DualCameraSession: NSObject, CameraSessionType {
             throw DualCameraSessionError.cannotAddConnection
         }
         session.addConnection(connection)
+    }
+
+    /// マイクを input として session に追加し、audio port を返す。
+    /// マイク未接続・権限拒否時は nil を返し、動画は音声なしで録画される。
+    private func addAudioInputIfAvailable() -> AVCaptureInput.Port? {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            Logger.session.notice("Microphone permission not granted; skipping audio input")
+            return nil
+        }
+        guard let audioDevice = AVCaptureDevice.default(for: .audio) else {
+            Logger.session.notice("Audio device not available; skipping audio input")
+            return nil
+        }
+        do {
+            let input = try AVCaptureDeviceInput(device: audioDevice)
+            guard session.canAddInput(input) else {
+                Logger.session.error("Cannot add audio input to session")
+                return nil
+            }
+            session.addInputWithNoConnections(input)
+            audioDeviceInput = input
+            return input.ports.first { $0.mediaType == .audio }
+        } catch {
+            Logger.session.error("Failed to create audio input: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// MovieFileOutput に video / audio connection を接続する。
+    private func addMovieFileOutputConnections(
+        output: AVCaptureMovieFileOutput,
+        videoPort: AVCaptureInput.Port,
+        audioPort: AVCaptureInput.Port?
+    ) throws {
+        guard session.canAddOutput(output) else {
+            throw DualCameraSessionError.cannotAddOutput
+        }
+        session.addOutputWithNoConnections(output)
+
+        let videoConnection = AVCaptureConnection(inputPorts: [videoPort], output: output)
+        if videoConnection.isVideoRotationAngleSupported(90) {
+            videoConnection.videoRotationAngle = 90
+        }
+        guard session.canAddConnection(videoConnection) else {
+            throw DualCameraSessionError.cannotAddConnection
+        }
+        session.addConnection(videoConnection)
+
+        if let audioPort {
+            let audioConnection = AVCaptureConnection(inputPorts: [audioPort], output: output)
+            guard session.canAddConnection(audioConnection) else {
+                throw DualCameraSessionError.cannotAddConnection
+            }
+            session.addConnection(audioConnection)
+        }
     }
 
     private func capturePhoto(

@@ -33,6 +33,10 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     let backVideoOutput = AVCaptureVideoDataOutput()
     let frontVideoOutput = AVCaptureVideoDataOutput()
 
+    /// Phase C-1: 背面カメラ用の動画出力。C-1-2 で録画の start/stop 実装。
+    let backMovieFileOutput = AVCaptureMovieFileOutput()
+    var audioDeviceInput: AVCaptureDeviceInput?
+
     private let sessionQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.session")
     let backVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.back.video")
     let frontVideoQueue = DispatchQueue(label: "jp.yanheng.TwinSnap.beauty.front.video")
