@@ -104,6 +104,36 @@ final class VideoAssetWriter {
         pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: time)
     }
 
+    /// CIImage を CVPixelBuffer に render して書き込む。
+    /// Phase C-2-2: PIP 合成後のフレーム書き込み用。
+    func append(ciImage: CIImage, at time: CMTime) {
+        guard let assetWriter, assetWriter.status == .writing,
+              let videoInput, videoInput.isReadyForMoreMediaData,
+              let pixelBufferAdaptor else {
+            return
+        }
+
+        if !isSessionStarted {
+            assetWriter.startSession(atSourceTime: time)
+            isSessionStarted = true
+        }
+
+        guard let pool = pixelBufferAdaptor.pixelBufferPool else {
+            Logger.session.error("VideoAssetWriter: pixelBufferPool unavailable")
+            return
+        }
+
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
+        guard let pixelBuffer else {
+            Logger.session.error("VideoAssetWriter: failed to allocate pixel buffer")
+            return
+        }
+
+        ciContext.render(ciImage, to: pixelBuffer)
+        pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: time)
+    }
+
     /// 書き込み終了。完了まで await。
     func stop() async {
         guard let assetWriter, assetWriter.status == .writing else {
