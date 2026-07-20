@@ -25,14 +25,30 @@ enum PhotoLibraryService {
         }
     }
 
+    /// 動画ファイルをフォトライブラリへ保存する。Phase C-1-5 で追加。
+    static func saveVideo(url: URL) async throws {
+        try await ensureAuthorization()
+        try await PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        }
+    }
+
+    /// 直近1件のメディア（画像 or 動画）のサムネイルを返す。
+    /// Phase C-1-5 で動画も含めるように変更。
     static func loadLatestThumbnail(targetSize: CGSize = CGSize(width: 200, height: 200)) async -> UIImage? {
         guard (try? await ensureAuthorization()) != nil else { return nil }
 
         let options = PHFetchOptions()
         options.fetchLimit = 1
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let result = PHAsset.fetchAssets(with: .image, options: options)
-        guard let asset = result.firstObject else { return nil }
+        let imageResult = PHAsset.fetchAssets(with: .image, options: options)
+        let videoResult = PHAsset.fetchAssets(with: .video, options: options)
+        let candidates = [imageResult.firstObject, videoResult.firstObject].compactMap { $0 }
+        guard let asset = candidates.max(by: {
+            ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast)
+        }) else {
+            return nil
+        }
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
             let requestOptions = PHImageRequestOptions()
