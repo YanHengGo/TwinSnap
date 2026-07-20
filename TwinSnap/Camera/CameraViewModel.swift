@@ -62,15 +62,50 @@ final class CameraViewModel {
 
     let settings: AppSettings
 
+    #if os(iOS)
+    private var backgroundObserver: NSObjectProtocol?
+    #endif
+
     init(settings: AppSettings = AppSettings()) {
         self.settings = settings
+        #if os(iOS)
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleAppWillResignActive()
+        }
+        #endif
     }
+
+    deinit {
+        #if os(iOS)
+        if let backgroundObserver {
+            NotificationCenter.default.removeObserver(backgroundObserver)
+        }
+        #endif
+    }
+
+    #if os(iOS)
+    /// 録画中にアプリがバックグラウンド遷移した場合、自動的に停止する。
+    /// 停止後の PhotoLibrary 保存は Task で発火するため、iOS がしばらくアプリを alive に保っている間に完了する可能性が高い。
+    /// 完了しなかった場合の tmp 残骸は次回起動時にクリーンアップされる。
+    private func handleAppWillResignActive() {
+        guard isRecording else { return }
+        Logger.session.notice("App will resign active during recording; stopping automatically")
+        stopVideoRecording()
+    }
+    #endif
 
     // PiP レイアウトの基準座標（CameraView と揃える）
     let pipBase = CGPoint(x: 16, y: 100)
     let pipDisplaySize = CGSize(width: 120, height: 168)
 
     func bootstrap() async {
+        #if os(iOS)
+        Self.cleanupStaleTempVideos()
+        #endif
         let granted = await requestCameraPermission()
         guard granted else {
             launchState = .permissionDenied
@@ -378,6 +413,24 @@ extension CameraViewModel {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("TwinSnap-\(UUID().uuidString)")
             .appendingPathExtension("mov")
+    }
+
+    /// 起動時に呼ぶ。前回の保存失敗などで残っている TwinSnap-*.mov を削除する。
+    static func cleanupStaleTempVideos() {
+        let tmp = FileManager.default.temporaryDirectory
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        var removed = 0
+        for file in files
+        where file.lastPathComponent.hasPrefix("TwinSnap-") && file.pathExtension == "mov" {
+            try? FileManager.default.removeItem(at: file)
+            removed += 1
+        }
+        if removed > 0 {
+            Logger.session.info("Cleaned up \(removed) stale temp video files")
+        }
     }
 }
 
