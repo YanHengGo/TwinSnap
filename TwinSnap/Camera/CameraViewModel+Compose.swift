@@ -44,37 +44,19 @@ extension CameraViewModel {
     }
 
     /// プレビュー座標系（points）で置かれた PiP を、`imageSize` の画像内での正規化 [0,1] 座標に変換する。
-    /// `videoGravity = .resizeAspectFill` で画像がキャンバスに表示されている前提で、
-    /// aspectFill による中央クロップを逆算する。
+    /// Phase C-2-2 で共有 `PIPGeometry` に委譲するよう変更。
     func normalizedPipRect(imageSize: CGSize) -> (center: CGPoint, size: CGSize) {
-        let canvas = canvasSize == .zero
-            ? CGSize(width: pipDisplaySize.width * 3, height: pipDisplaySize.height * 5)
-            : canvasSize
+        currentPIPGeometry().normalizedRect(imageSize: imageSize)
+    }
 
-        // aspectFill: 1 preview point = pixelsPerPoint image pixels
-        // 画像が両dim >= canvas となる最小スケールで拡大 → 逆比で min を取る
-        let pixelsPerPoint = min(
-            imageSize.width / canvas.width,
-            imageSize.height / canvas.height
-        )
-        let viewportWidth = canvas.width * pixelsPerPoint
-        let viewportHeight = canvas.height * pixelsPerPoint
-        let cropOffsetX = (imageSize.width - viewportWidth) / 2
-        let cropOffsetY = (imageSize.height - viewportHeight) / 2
-
-        let originX = pipBase.x + pipOffset.width
-        let originY = pipBase.y + pipOffset.height
-        let centerXPreview = originX + pipDisplaySize.width / 2
-        let centerYPreview = originY + pipDisplaySize.height / 2
-
-        let centerXImage = cropOffsetX + centerXPreview * pixelsPerPoint
-        let centerYImage = cropOffsetY + centerYPreview * pixelsPerPoint
-        let widthImage = pipDisplaySize.width * pixelsPerPoint
-        let heightImage = pipDisplaySize.height * pixelsPerPoint
-
-        return (
-            CGPoint(x: centerXImage / imageSize.width, y: centerYImage / imageSize.height),
-            CGSize(width: widthImage / imageSize.width, height: heightImage / imageSize.height)
+    /// 現在の canvas/offset/base/display を snapshot した `PIPGeometry` を返す。
+    /// 動画録画開始時にも渡す用途で共有。
+    func currentPIPGeometry() -> PIPGeometry {
+        PIPGeometry(
+            canvasSize: canvasSize,
+            pipBase: pipBase,
+            pipDisplaySize: pipDisplaySize,
+            pipOffset: pipOffset
         )
     }
 }

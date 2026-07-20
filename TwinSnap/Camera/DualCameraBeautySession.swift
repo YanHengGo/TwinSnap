@@ -60,11 +60,17 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var lastBackFaces: [CGRect] = []
     private var lastFrontFaces: [CGRect] = []
 
-    // MARK: - AVAssetWriter (Phase C-2-1)
+    // MARK: - AVAssetWriter (Phase C-2-1 / C-2-2)
 
     private var videoAssetWriter: VideoAssetWriter?
     /// 録画開始要求のURL。最初のフレーム到着時に AssetWriter を initialize する。
     private var pendingAssetWriterURL: URL?
+
+    /// PIP 合成用のジオメトリ（PIP compose 経路のみ設定）。nil の場合は背面のみ書き出し。
+    private var pipGeometry: PIPGeometry?
+    /// 前面カメラの最新フレーム（PIP 合成の sub に使う）。frontVideoQueue で書き、backVideoQueue で読む。
+    private var latestFrontCIImage: CIImage?
+    private let frontFrameLock = NSLock()
 
     // MARK: - Devices (for negotiate)
 
@@ -179,18 +185,24 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     // MARK: - AVAssetWriter recording (Phase C-2-1)
 
     /// AVAssetWriter 経由の録画を開始する。実際の writer 初期化は最初のフレーム到着時。
-    func startAssetWriterRecording(to url: URL) {
+    /// - Parameter pipGeometry: 指定時は PIP 合成モード（背面 + 前面をリアルタイム合成）。nil なら背面のみ。
+    func startAssetWriterRecording(to url: URL, pipGeometry: PIPGeometry? = nil) {
         guard videoAssetWriter == nil, pendingAssetWriterURL == nil else {
             Logger.session.notice("startAssetWriterRecording ignored: already recording")
             return
         }
-        Logger.session.info("startAssetWriterRecording pending: \(url.lastPathComponent, privacy: .public)")
+        Logger.session.info("startAssetWriterRecording pending: \(url.lastPathComponent, privacy: .public) pip=\(pipGeometry != nil)")
         pendingAssetWriterURL = url
+        self.pipGeometry = pipGeometry
     }
 
     /// AVAssetWriter 経由の録画を停止し、完了を await して URL を返す。
     func stopAssetWriterRecording() async -> URL? {
         pendingAssetWriterURL = nil
+        pipGeometry = nil
+        frontFrameLock.lock()
+        latestFrontCIImage = nil
+        frontFrameLock.unlock()
         guard let writer = videoAssetWriter else {
             Logger.session.notice("stopAssetWriterRecording: no active writer")
             return nil
@@ -280,13 +292,14 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
             : BeautyProcessor.beautifyCIImage(ciImage, level: level, faceRects: lastBackFaces)
         backRenderer?.present(output)
 
-        // Phase C-2-1: AssetWriter 録画中なら背面バッファを書き込む（PIP・美顔なし、素通し）
-        appendToAssetWriterIfNeeded(sampleBuffer: sampleBuffer)
+        // Phase C-2: AssetWriter 録画中ならフレームを書き込む
+        appendToAssetWriterIfNeeded(sampleBuffer: sampleBuffer, backCIImage: ciImage)
     }
 
     /// AssetWriter が pending or writing の場合、フレームを書き込む。
     /// 最初のフレームで writer を初期化する（実サイズ判明のため）。
-    private func appendToAssetWriterIfNeeded(sampleBuffer: CMSampleBuffer) {
+    /// pipGeometry があれば背面 + 前面を PIP 合成、なければ背面のみ素通し。
+    private func appendToAssetWriterIfNeeded(sampleBuffer: CMSampleBuffer, backCIImage: CIImage) {
         if let pendingURL = pendingAssetWriterURL, videoAssetWriter == nil {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
                   let ciContext = MetalPreviewRenderer.sharedCIContext else {
@@ -310,7 +323,25 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
             }
         }
 
-        videoAssetWriter?.append(sampleBuffer: sampleBuffer)
+        guard let writer = videoAssetWriter else { return }
+        let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+
+        // PIP 合成モード: 前面フレームが揃っていれば合成、それ以外は背面素通し
+        if let geometry = pipGeometry {
+            frontFrameLock.lock()
+            let front = latestFrontCIImage
+            frontFrameLock.unlock()
+            if let front {
+                let pipRect = geometry.rect(imageSize: backCIImage.extent.size)
+                let composed = PIPCompositor.composePIP(main: backCIImage, sub: front, pipRect: pipRect)
+                writer.append(ciImage: composed, at: time)
+            } else {
+                writer.append(sampleBuffer: sampleBuffer)
+            }
+        } else {
+            // 背面のみ（C-2-1 モード）
+            writer.append(sampleBuffer: sampleBuffer)
+        }
     }
 
     /// frontVideoQueue（シリアル）でのみ呼ばれるため排他不要。
@@ -323,6 +354,13 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
             ? ciImage
             : BeautyProcessor.beautifyCIImage(ciImage, level: level, faceRects: lastFrontFaces)
         frontRenderer?.present(output)
+
+        // Phase C-2-2: PIP 合成用に最新の前面フレームを保持（合成前の原生 CIImage）
+        if pipGeometry != nil {
+            frontFrameLock.lock()
+            latestFrontCIImage = ciImage
+            frontFrameLock.unlock()
+        }
     }
 }
 

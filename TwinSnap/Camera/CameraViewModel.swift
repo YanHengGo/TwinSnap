@@ -331,7 +331,8 @@ extension CameraViewModel {
 
         if settings.videoPipCompositionEnabled,
            let beautySession = session as? DualCameraBeautySession {
-            beautySession.startAssetWriterRecording(to: url)
+            let geometry = currentPIPGeometry()
+            beautySession.startAssetWriterRecording(to: url, pipGeometry: geometry)
             // AssetWriter は開始 delegate を持たないため即座に状態を更新
             handleRecordingStarted(url: url)
         } else {
