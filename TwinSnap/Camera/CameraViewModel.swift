@@ -34,6 +34,23 @@ final class CameraViewModel {
     private(set) var toastMessage: String?
     var isSettingsPresented: Bool = false
 
+    // MARK: - Recording state (Phase C-1)
+
+    private(set) var captureMode: CaptureMode = .photo
+    private(set) var isRecording: Bool = false
+    private(set) var recordingElapsedSeconds: Int = 0
+    #if os(iOS)
+    private(set) var lastRecordedVideoURL: URL?
+    var recordingDelegate: VideoRecordingDelegate?
+    var recordingTimerTask: Task<Void, Never>?
+    #endif
+
+    /// 録画中はモード切替を無視する（誤操作防止）。
+    func setCaptureMode(_ mode: CaptureMode) {
+        guard !isRecording else { return }
+        captureMode = mode
+    }
+
     #if os(iOS)
     private(set) var session: (any CameraSessionType)?
     private(set) var composedImage: UIImage?
@@ -263,3 +280,86 @@ final class CameraViewModel {
         }
     }
 }
+
+#if os(iOS)
+
+// MARK: - Video recording (Phase C-1)
+
+extension CameraViewModel {
+
+    /// 動画録画を開始する。tmp ディレクトリに mp4 を作成し、session の MovieFileOutput へ委譲する。
+    /// 完了通知は `VideoRecordingDelegate` 経由で `handleRecordingFinished` に到達する。
+    func startVideoRecording() {
+        guard let session, !isRecording else { return }
+        let url = Self.makeTempVideoURL()
+        let delegate = VideoRecordingDelegate(
+            onStart: { [weak self] startedURL in
+                DispatchQueue.main.async {
+                    self?.handleRecordingStarted(url: startedURL)
+                }
+            },
+            onFinish: { [weak self] finishedURL, error in
+                DispatchQueue.main.async {
+                    self?.handleRecordingFinished(url: finishedURL, error: error)
+                }
+            }
+        )
+        // MovieFileOutput は delegate を weak 保持するため、ViewModel 側で strong 保持する
+        recordingDelegate = delegate
+        session.startRecording(to: url, delegate: delegate)
+    }
+
+    /// 動画録画を停止する。実際の完了は delegate の onFinish で通知される。
+    func stopVideoRecording() {
+        guard let session, isRecording else { return }
+        session.stopRecording()
+    }
+
+    private func handleRecordingStarted(url: URL) {
+        isRecording = true
+        recordingElapsedSeconds = 0
+        Logger.session.info("Recording started")
+        startRecordingTimer()
+    }
+
+    private func handleRecordingFinished(url: URL, error: Error?) {
+        stopRecordingTimer()
+        isRecording = false
+        recordingDelegate = nil
+        if let error {
+            Logger.session.error("Recording failed: \(error.localizedDescription, privacy: .public)")
+            showToast("録画に失敗しました")
+            try? FileManager.default.removeItem(at: url)
+            lastRecordedVideoURL = nil
+        } else {
+            Logger.session.info("Recording finished successfully")
+            lastRecordedVideoURL = url
+            // C-1-5 で PhotoLibrary 保存と tmp cleanup を行う
+        }
+    }
+
+    private func startRecordingTimer() {
+        recordingTimerTask?.cancel()
+        recordingTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { break }
+                guard let self else { break }
+                self.recordingElapsedSeconds += 1
+            }
+        }
+    }
+
+    private func stopRecordingTimer() {
+        recordingTimerTask?.cancel()
+        recordingTimerTask = nil
+    }
+
+    private static func makeTempVideoURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("TwinSnap-\(UUID().uuidString)")
+            .appendingPathExtension("mov")
+    }
+}
+
+#endif
