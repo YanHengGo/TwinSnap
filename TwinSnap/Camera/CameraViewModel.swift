@@ -63,6 +63,12 @@ final class CameraViewModel {
             launchState = .unsupported
             return
         }
+        // マイク権限はベストエフォート。拒否されても動画は音声なしで撮影可能とし、
+        // 起動フローは止めない。
+        let micGranted = await requestMicrophonePermission()
+        if !micGranted {
+            Logger.session.notice("Microphone permission not granted; video will be recorded without audio")
+        }
         #if os(iOS)
         do {
             let newSession = try makeSession()
@@ -237,6 +243,19 @@ final class CameraViewModel {
             return true
         case .notDetermined:
             return await AVCaptureDevice.requestAccess(for: .video)
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func requestMicrophonePermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .audio)
         case .denied, .restricted:
             return false
         @unknown default:
