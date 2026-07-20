@@ -43,6 +43,11 @@ final class MetalPreviewRenderer: NSObject {
         return MetalPreviewRenderer(resources: resources)
     }
 
+    /// VideoAssetWriter など他のコンポーネントで CIContext を再利用するためのアクセサ。
+    static var sharedCIContext: CIContext? {
+        shared?.ciContext
+    }
+
     private init(resources: SharedResources) {
         self.ciContext = resources.ciContext
         self.commandQueue = resources.commandQueue

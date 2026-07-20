@@ -322,32 +322,57 @@ final class CameraViewModel {
 
 extension CameraViewModel {
 
-    /// 動画録画を開始する。tmp ディレクトリに mp4 を作成し、session の MovieFileOutput へ委譲する。
-    /// 完了通知は `VideoRecordingDelegate` 経由で `handleRecordingFinished` に到達する。
+    /// 動画録画を開始する。
+    /// - Beauty session + PIP 合成 ON: `AVAssetWriter` 経路（Phase C-2）
+    /// - それ以外: `AVCaptureMovieFileOutput` 経路（Phase C-1）
     func startVideoRecording() {
         guard let session, !isRecording else { return }
         let url = Self.makeTempVideoURL()
-        let delegate = VideoRecordingDelegate(
-            onStart: { [weak self] startedURL in
-                DispatchQueue.main.async {
-                    self?.handleRecordingStarted(url: startedURL)
+
+        if settings.videoPipCompositionEnabled,
+           let beautySession = session as? DualCameraBeautySession {
+            beautySession.startAssetWriterRecording(to: url)
+            // AssetWriter は開始 delegate を持たないため即座に状態を更新
+            handleRecordingStarted(url: url)
+        } else {
+            let delegate = VideoRecordingDelegate(
+                onStart: { [weak self] startedURL in
+                    DispatchQueue.main.async {
+                        self?.handleRecordingStarted(url: startedURL)
+                    }
+                },
+                onFinish: { [weak self] finishedURL, error in
+                    DispatchQueue.main.async {
+                        self?.handleRecordingFinished(url: finishedURL, error: error)
+                    }
                 }
-            },
-            onFinish: { [weak self] finishedURL, error in
-                DispatchQueue.main.async {
-                    self?.handleRecordingFinished(url: finishedURL, error: error)
-                }
-            }
-        )
-        // MovieFileOutput は delegate を weak 保持するため、ViewModel 側で strong 保持する
-        recordingDelegate = delegate
-        session.startRecording(to: url, delegate: delegate)
+            )
+            // MovieFileOutput は delegate を weak 保持するため、ViewModel 側で strong 保持する
+            recordingDelegate = delegate
+            session.startRecording(to: url, delegate: delegate)
+        }
     }
 
-    /// 動画録画を停止する。実際の完了は delegate の onFinish で通知される。
+    /// 動画録画を停止する。実際の完了は経路に応じて非同期で通知される。
     func stopVideoRecording() {
         guard let session, isRecording else { return }
-        session.stopRecording()
+
+        if settings.videoPipCompositionEnabled,
+           let beautySession = session as? DualCameraBeautySession {
+            Task {
+                let url = await beautySession.stopAssetWriterRecording()
+                if let url {
+                    handleRecordingFinished(url: url, error: nil)
+                } else {
+                    handleRecordingFinished(
+                        url: Self.makeTempVideoURL(),
+                        error: VideoAssetWriterError.notWriting
+                    )
+                }
+            }
+        } else {
+            session.stopRecording()
+        }
     }
 
     private func handleRecordingStarted(url: URL) {

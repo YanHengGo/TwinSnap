@@ -53,6 +53,13 @@ final class AppSettings {
         didSet { store.set(wysiwygBeautyPreviewEnabled, forKey: Keys.wysiwygBeautyPreviewEnabled) }
     }
 
+    /// Phase C-2: PIP 合成動画を録画するか。ON かつ Beauty session の場合、
+    /// MovieFileOutput ではなく AVAssetWriter パスで録画される。
+    /// C-2-1 時点ではデバッグ用トグル。C-2-5 で「動画」セクションとして正式 UI 化する。
+    var videoPipCompositionEnabled: Bool {
+        didSet { store.set(videoPipCompositionEnabled, forKey: Keys.videoPipCompositionEnabled) }
+    }
+
     private let store: UserDefaults
 
     init(store: UserDefaults = .standard) {
@@ -70,11 +77,13 @@ final class AppSettings {
             self.saveMode = .composedAndOriginals
         }
         self.wysiwygBeautyPreviewEnabled = store.bool(forKey: Keys.wysiwygBeautyPreviewEnabled)
+        self.videoPipCompositionEnabled = store.bool(forKey: Keys.videoPipCompositionEnabled)
     }
 
     private enum Keys {
         static let defaultLayout = "settings.defaultLayout"
         static let saveMode = "settings.saveMode"
         static let wysiwygBeautyPreviewEnabled = "settings.wysiwygBeautyPreviewEnabled"
+        static let videoPipCompositionEnabled = "settings.videoPipCompositionEnabled"
     }
 }
