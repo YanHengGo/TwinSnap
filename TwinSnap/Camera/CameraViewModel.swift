@@ -334,7 +334,26 @@ extension CameraViewModel {
         } else {
             Logger.session.info("Recording finished successfully")
             lastRecordedVideoURL = url
-            // C-1-5 で PhotoLibrary 保存と tmp cleanup を行う
+            Task { await self.persistRecordedVideo(url: url) }
+        }
+    }
+
+    /// 録画完了した tmp ファイルをフォトライブラリへ保存し、tmp を削除、サムネイルを更新する。
+    private func persistRecordedVideo(url: URL) async {
+        do {
+            try await PhotoLibraryService.saveVideo(url: url)
+            Logger.session.info("Video saved to photo library")
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            showToast("保存しました")
+            try? FileManager.default.removeItem(at: url)
+            await refreshLatestThumbnail()
+        } catch {
+            Logger.session.error("Video save failed: \(error.localizedDescription, privacy: .public)")
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+            showToast("保存に失敗しました")
+            // 保存失敗時は tmp を残す（次回のクリーンアップ機会に処理）
         }
     }
 
