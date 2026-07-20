@@ -9,6 +9,7 @@
 #if os(iOS)
 import AVFoundation
 import Foundation
+import OSLog
 
 extension DualCameraBeautySession {
 
@@ -40,7 +41,10 @@ extension DualCameraBeautySession {
     /// 4段階の降格ラダー。設計書 Phase B-3 5.3 の pseudo-code に準拠。
     /// (fps, formatIndex) の順で試行し、最初に閾値以下になったら成功。
     func negotiateCostLimit(back: AVCaptureDevice, front: AVCaptureDevice) throws {
-        if session.hardwareCost <= hardwareCostThreshold {
+        let initialCost = session.hardwareCost
+        Logger.negotiate.info("Initial hardwareCost: \(initialCost) (threshold: \(self.hardwareCostThreshold))")
+        if initialCost <= hardwareCostThreshold {
+            Logger.negotiate.info("Initial configuration accepted; no degradation needed")
             return
         }
 
@@ -55,14 +59,21 @@ extension DualCameraBeautySession {
             Attempt(fps: 20, formatIndex: 2)
         ]
 
-        for attempt in attempts {
-            guard attempt.formatIndex < rankedFormatPairs.count else { continue }
+        for (index, attempt) in attempts.enumerated() {
+            guard attempt.formatIndex < rankedFormatPairs.count else {
+                Logger.negotiate.info("Skipping attempt \(index + 1): formatIndex \(attempt.formatIndex) unavailable")
+                continue
+            }
             let pair = rankedFormatPairs[attempt.formatIndex]
             try applyDegradedConfiguration(back: back, front: front, pair: pair, fps: attempt.fps)
-            if session.hardwareCost <= hardwareCostThreshold {
+            let cost = session.hardwareCost
+            Logger.negotiate.info("Attempt \(index + 1): fps=\(attempt.fps) formatIndex=\(attempt.formatIndex) → hardwareCost=\(cost)")
+            if cost <= hardwareCostThreshold {
+                Logger.negotiate.notice("Degradation succeeded at attempt \(index + 1) (fps=\(attempt.fps))")
                 return
             }
         }
+        Logger.negotiate.error("All degradation attempts exhausted; throwing hardwareCostExceeded")
         throw DualCameraSessionError.hardwareCostExceeded
     }
 

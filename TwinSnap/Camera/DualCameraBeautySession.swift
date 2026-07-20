@@ -11,6 +11,7 @@
 import AVFoundation
 import CoreImage
 import Foundation
+import OSLog
 
 final class DualCameraBeautySession: NSObject, CameraSessionType {
 
@@ -90,16 +91,26 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         self.frontDevice = front
         self.rankedFormatPairs = ranked
 
+        let backDim = CMVideoFormatDescriptionGetDimensions(bestPair.back.formatDescription)
+        let frontDim = CMVideoFormatDescriptionGetDimensions(bestPair.front.formatDescription)
+        let backSize = "\(backDim.width)x\(backDim.height)"
+        let frontSize = "\(frontDim.width)x\(frontDim.height)"
+        Logger.session.info(
+            "Configuring beauty session: back=\(backSize) front=\(frontSize) rankedPairs=\(ranked.count)"
+        )
+
         try initialConfigure(back: back, front: front, formatPair: bestPair)
 
         // 初期構成後に hardwareCost をチェック。超過なら降格ラダーで再試行。
         try negotiateCostLimit(back: back, front: front)
+        Logger.session.info("Beauty session configured; final hardwareCost=\(self.session.hardwareCost)")
     }
 
     func start() {
         sessionQueue.async { [session] in
             guard !session.isRunning else { return }
             session.startRunning()
+            Logger.session.info("DualCameraBeautySession started")
         }
     }
 
@@ -107,6 +118,7 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         sessionQueue.async { [session] in
             guard session.isRunning else { return }
             session.stopRunning()
+            Logger.session.info("DualCameraBeautySession stopped")
         }
     }
 
@@ -127,6 +139,7 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         suppressionLock.lock()
         isBeautySuppressed = suppressed
         suppressionLock.unlock()
+        Logger.beauty.notice("Beauty chain suppression=\(suppressed)")
     }
 
     private func currentBeautyLevel() -> Double {
