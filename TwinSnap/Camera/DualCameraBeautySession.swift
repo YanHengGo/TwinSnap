@@ -60,6 +60,12 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
     private var lastBackFaces: [CGRect] = []
     private var lastFrontFaces: [CGRect] = []
 
+    // MARK: - AVAssetWriter (Phase C-2-1)
+
+    private var videoAssetWriter: VideoAssetWriter?
+    /// 録画開始要求のURL。最初のフレーム到着時に AssetWriter を initialize する。
+    private var pendingAssetWriterURL: URL?
+
     // MARK: - Devices (for negotiate)
 
     private var backDevice: AVCaptureDevice?
@@ -148,7 +154,9 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
 
     // MARK: - Video recording (Phase C-1)
 
-    var isRecording: Bool { backMovieFileOutput.isRecording }
+    var isRecording: Bool {
+        backMovieFileOutput.isRecording || videoAssetWriter?.isWriting == true || pendingAssetWriterURL != nil
+    }
 
     func startRecording(to url: URL, delegate: AVCaptureFileOutputRecordingDelegate) {
         guard !backMovieFileOutput.isRecording else {
@@ -166,6 +174,32 @@ final class DualCameraBeautySession: NSObject, CameraSessionType {
         }
         Logger.session.info("stopRecording")
         backMovieFileOutput.stopRecording()
+    }
+
+    // MARK: - AVAssetWriter recording (Phase C-2-1)
+
+    /// AVAssetWriter 経由の録画を開始する。実際の writer 初期化は最初のフレーム到着時。
+    func startAssetWriterRecording(to url: URL) {
+        guard videoAssetWriter == nil, pendingAssetWriterURL == nil else {
+            Logger.session.notice("startAssetWriterRecording ignored: already recording")
+            return
+        }
+        Logger.session.info("startAssetWriterRecording pending: \(url.lastPathComponent, privacy: .public)")
+        pendingAssetWriterURL = url
+    }
+
+    /// AVAssetWriter 経由の録画を停止し、完了を await して URL を返す。
+    func stopAssetWriterRecording() async -> URL? {
+        pendingAssetWriterURL = nil
+        guard let writer = videoAssetWriter else {
+            Logger.session.notice("stopAssetWriterRecording: no active writer")
+            return nil
+        }
+        let url = writer.outputURL
+        await writer.stop()
+        videoAssetWriter = nil
+        Logger.session.info("AssetWriter recording finished")
+        return url
     }
 
     private func currentBeautyLevel() -> Double {
@@ -229,14 +263,14 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
         let level = currentSuppressed() ? 0 : currentBeautyLevel()
 
         if output === backVideoOutput {
-            processBack(ciImage: ciImage, level: level)
+            processBack(sampleBuffer: sampleBuffer, ciImage: ciImage, level: level)
         } else if output === frontVideoOutput {
             processFront(ciImage: ciImage, level: level)
         }
     }
 
     /// backVideoQueue（シリアル）でのみ呼ばれるため排他不要。
-    private func processBack(ciImage: CIImage, level: Double) {
+    private func processBack(sampleBuffer: CMSampleBuffer, ciImage: CIImage, level: Double) {
         backFrameCounter &+= 1
         if backFrameCounter % faceDetectionInterval == 0 {
             lastBackFaces = BeautyProcessor.detectFaces(in: ciImage)
@@ -245,6 +279,38 @@ extension DualCameraBeautySession: AVCaptureVideoDataOutputSampleBufferDelegate 
             ? ciImage
             : BeautyProcessor.beautifyCIImage(ciImage, level: level, faceRects: lastBackFaces)
         backRenderer?.present(output)
+
+        // Phase C-2-1: AssetWriter 録画中なら背面バッファを書き込む（PIP・美顔なし、素通し）
+        appendToAssetWriterIfNeeded(sampleBuffer: sampleBuffer)
+    }
+
+    /// AssetWriter が pending or writing の場合、フレームを書き込む。
+    /// 最初のフレームで writer を初期化する（実サイズ判明のため）。
+    private func appendToAssetWriterIfNeeded(sampleBuffer: CMSampleBuffer) {
+        if let pendingURL = pendingAssetWriterURL, videoAssetWriter == nil {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+                  let ciContext = MetalPreviewRenderer.sharedCIContext else {
+                Logger.session.error("AssetWriter start aborted: no CIContext or pixelBuffer")
+                pendingAssetWriterURL = nil
+                return
+            }
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let size = CGSize(width: width, height: height)
+            let writer = VideoAssetWriter(ciContext: ciContext)
+            do {
+                try writer.start(url: pendingURL, size: size)
+                videoAssetWriter = writer
+                pendingAssetWriterURL = nil
+                Logger.session.info("AssetWriter started (\(width)x\(height))")
+            } catch {
+                Logger.session.error("AssetWriter start failed: \(error.localizedDescription, privacy: .public)")
+                pendingAssetWriterURL = nil
+                return
+            }
+        }
+
+        videoAssetWriter?.append(sampleBuffer: sampleBuffer)
     }
 
     /// frontVideoQueue（シリアル）でのみ呼ばれるため排他不要。

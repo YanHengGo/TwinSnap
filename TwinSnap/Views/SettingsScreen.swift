@@ -113,10 +113,18 @@ struct SettingsScreen: View {
             )) {
                 Text("WYSIWYG 美顔プレビュー")
             }
+
+            Toggle(isOn: Binding(
+                get: { settings.videoPipCompositionEnabled },
+                set: { settings.videoPipCompositionEnabled = $0 }
+            )) {
+                Text("PIP 合成録画（β）")
+            }
+            .disabled(!settings.wysiwygBeautyPreviewEnabled)
         } header: {
             Text("実験機能")
         } footer: {
-            Text("プレビューに美顔フィルターをリアルタイム反映します。変更後はアプリを再起動してください。端末が高温になった場合は自動的にオフになります。")
+            Text("WYSIWYG 美顔プレビューはプレビューに美顔フィルターをリアルタイム反映します。変更後はアプリを再起動してください。端末が高温になった場合は自動的にオフになります。\n\nPIP 合成録画は Beauty session 稼働時のみ有効。C-2-1 は背面のみ書き出し。C-2-2 以降で PIP 合成対応予定。")
                 .font(.caption)
         }
     }
