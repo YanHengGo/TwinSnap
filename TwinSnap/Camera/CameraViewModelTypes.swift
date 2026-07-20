@@ -28,6 +28,12 @@ extension CameraViewModel {
         case front
     }
 
+    /// 撮影モード。Phase C-1 で追加。UI のセグメントコントロールで切替。
+    enum CaptureMode {
+        case photo
+        case video
+    }
+
     enum FlashMode: CaseIterable {
         case off, on, auto
 
